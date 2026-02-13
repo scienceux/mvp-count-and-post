@@ -1,0 +1,31 @@
+#include <Arduino.h>
+
+// For Seeed XIAO ESP32-S3, the built-in LED is typically on pin 21
+// But LED_BUILTIN should work if defined correctly in the board files
+#ifndef LED_BUILTIN
+#define LED_BUILTIN 21
+#endif
+
+void setup() {
+  // Initialize serial communication for debugging (optional)
+  Serial.begin(115200);
+
+  // Set LED pin as output
+  pinMode(LED_BUILTIN, OUTPUT);
+  
+  Serial.println("LED Blink Program Started!");
+  Serial.print("Using LED pin: ");
+  Serial.println(LED_BUILTIN);
+}
+
+void loop() {
+  // Turn LED on
+  digitalWrite(LED_BUILTIN, HIGH);
+  Serial.println("LED ON");
+  delay(1000);  // Wait for 1 second
+  
+  // Turn LED off
+  digitalWrite(LED_BUILTIN, LOW);
+  Serial.println("LED OFF");
+  delay(1000);  // Wait for 1 second
+}
