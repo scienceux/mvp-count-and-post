@@ -5,7 +5,7 @@
 #include "esp_camera.h"
 
 // utilities_camera.h
-bool CameraSetup(int targetFps);
+bool CameraSetup(int targetFps, const char* deviceMode);
 int CameraGetTargetFps();
 bool CameraSetFrameRotation(int degrees);
 
@@ -33,9 +33,8 @@ void CameraRelease(const Frame& frame);
 bool SaveLastFrameJpeg(const Frame& frame);
 
 // Video recording - saves frames to SD in folders every intervalMinutes
-bool StartVideoRecording(int intervalMinutes);
-void StopVideoRecording();
-bool IsVideoRecording();
-void VideoRecordingLoop();
+bool StartNewVideo(const char* folder);
+void AddToVideo();
+void CloseOffVideo();
 
 #endif // UTILITIES_CAMERA_H

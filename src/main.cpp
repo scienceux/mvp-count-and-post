@@ -21,9 +21,18 @@
 
 
 // CONFIG
+//==================================================
 // ---- adjust these as needed ----
-const char* DEVICE_MODE = "VIDEO_FOR_TRAINING"; // ENTEREXIT, OCCUPANCY, VIDEO_FOR_TRAINING (for training)
+// ENTEREXIT, OCCUPANCY, VIDEO_FOR_TRAINING (for training)
+const char* DEVICE_MODE = "VIDEO_FOR_TRAINING"; 
 const int CAMERA_FPS = 4;
+
+// Video mode
+const char* VIDEO_SAVE_FOLDER = "/videos"; // SD card folder to save videos (for VIDEO_FOR_TRAINING mode)
+const float HOW_OFTEN_SAVE_VIDEO_FROM_JPG = 60.0f; // seconds - how often to save a new video file from JPG frames in VIDEO_FOR_TRAINING mode
+
+
+// Occupancy counting mode
 const float OCCUPANCY_EVERY_SECS = 30.0f;
 char global_csv_path[64] = "/occupancy.csv";
 
@@ -32,7 +41,7 @@ char global_csv_path[64] = "/occupancy.csv";
 const char* WIFI_SSID = "posterbuddy";
 const char* WIFI_USER = ""; // unused for WPA2-PSK
 const char* WIFI_PASS = "money4connie";
-// -------------------------------
+//==================================================
 
 
 
@@ -41,24 +50,36 @@ const char* WIFI_PASS = "money4connie";
 static int g_lastOccupancyCount = 0;
 
 
-
 void setup() {
   // Initialize serial communication for debugging (optional)
   Serial.begin(9600);
   delay(5000);
 
-  // Initialize config from NVS (must be called before using config getters)
-  ConfigInit();
+  // // Initialize config from NVS (must be called before using config getters)
+  // ConfigInit();
   
-  if (GetDeviceName().length() > 0) {
-    log_print(String("Device Name: ") + GetDeviceName());
-  } else {
-    log_print("No device name set in preferences.");
-  }
+  // if (GetDeviceName().length() > 0) {
+  //   log_print(String("Device Name: ") + GetDeviceName());
+  // } else {
+  //   log_print("No device name set in preferences.");
+  // }
 
+  log_print(DEVICE_MODE);
   
-  CreateTimer("OccupancyEverySecs", OCCUPANCY_EVERY_SECS);
-  CreateTimer("UpdateAverageFrameSecs", 300.0f);  
+  // What mode?
+  //================================
+  if (strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0) {
+    CreateTimer("SaveMJpeg", HOW_OFTEN_SAVE_VIDEO_FROM_JPG);
+    StartNewVideo(VIDEO_SAVE_FOLDER);
+
+  } else if (strcmp(DEVICE_MODE, "OCCUPANCY") == 0) {
+    CreateTimer("OccupancyEverySecs", OCCUPANCY_EVERY_SECS);
+    CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 5 minutes
+  } else if (strcmp(DEVICE_MODE, "ENTEREXIT") == 0) {
+    log_print("ENTEREXIT mode - not implemented yet");
+  } else {
+    log_print(String("Unknown DEVICE_MODE: ") + DEVICE_MODE);
+  }
 
   bool ledOk = setupLED();
   if (ledOk) {
@@ -68,7 +89,7 @@ void setup() {
     log_print("LED setup failed.");
   }
 
-  bool cameraOk = CameraSetup(CAMERA_FPS);
+  bool cameraOk = CameraSetup(CAMERA_FPS, DEVICE_MODE);
   if (cameraOk) {
     CameraSetFrameRotation(90);
     log_print("Camera setup successful.");
@@ -99,56 +120,78 @@ void setup() {
     log_print("WiFi connection failed.");
   }
 
-  if (cameraOk && sdOk) {
+  if (cameraOk && sdOk && strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") != 0) {
     log_print("Creating initial average frame...");
     CameraCreateAvgFrame(10, "new"); // Create average frame over 10 seconds
-
-    if (String(DEVICE_MODE) == "VIDEO_FOR_TRAINING") {
-      StartVideoRecording(5); // Start video recording with 5 minute intervals
-      log_print("Video recording started (5-min files).");
-    }
+    // Remove the StartVideoRecording call from here - it's handled in loop()
   }
-
 
 }
 
 void loop() {
-    if (strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0) {
-        StartVideoRecording(5);  // new AVI file every 5 minutes
-        log_print("Video recording started (5-min files).");
-        return;
+
+    // Whatever the mode, you're gonna want the frame and the time
+    TimeExact exactTime = WhatTimeIsItExactly();
+    Frame frame = CameraGetLatestFrame();          
+
+    // Poll the remote serial interface for incoming data
+    remote_serial_poll();    
+
+    if ( strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0 ) {
+      //================================================================
+      // VIDEO mode
+      // In this mode, we save a new video file every HOW_OFTEN_SAVE_VIDEO_FROM_JPG seconds by capturing a JPG frame and appending it to the MJPEG stream file. 
+      // StartVideoRecording(1);  // new video file every 1 minute      
+      //================================================================
+      if (GetTimerCurrent("SaveMJpeg") >= GetTimerLimitSeconds("SaveMJpeg")) {
+        CloseOffVideo();
+        StartNewVideo(VIDEO_SAVE_FOLDER);
+        RestartTimer("SaveMJpeg");
+      } else {
+        AddToVideo();
+      }
+
+      return;
+
+    } else {
+      //================================
+      // OCCUPANCY or ENTEREXIT mode
+      //================================
+
+      // Average frame
+      if (GetTimerCurrent("UpdateAverageFrameSecs") >= GetTimerLimitSeconds("UpdateAverageFrameSecs")) {
+          CameraCreateAvgFrame(10, "append"); // Append 10 seconds of frames to the average
+          RestartTimer("UpdateAverageFrameSecs");
+      }      
+
+      if ( strcmp(DEVICE_MODE, "OCCUPANCY") == 0 ) {
+        if (GetTimerCurrent("OccupancyEverySecs") >= GetTimerLimitSeconds("OccupancyEverySecs")) {
+            TimeExact exactTime = WhatTimeIsItExactly();
+            Frame frame = CameraGetLatestFrame();
+            // SaveLastFrameJpeg(frame);
+            g_lastOccupancyCount = CountOccupancyInFrame(frame, global_averageFrame_path);
+            CameraRelease(frame);
+            log_print(g_lastOccupancyCount);
+            RestartTimer("OccupancyEverySecs");
+
+            char timeBuf[48];
+            snprintf(timeBuf, sizeof(timeBuf),
+                    "%04d-%02d-%02d %02d:%02d:%02d.%03d",
+                    exactTime.year, exactTime.month, exactTime.day,
+                    exactTime.hour, exactTime.minute, exactTime.second,
+                    exactTime.millisecond);
+            log_print(timeBuf);
+
+            // Log the data
+        } else if ( strcmp(DEVICE_MODE, "ENTEREXIT") == 0 ) {
+          log_print("ENTEREXIT mode - not implemented yet");
+        }     
+
+      }
+
     }
-
-    remote_serial_poll();
-
-    // Check for config commands over serial (IDENTIFY, SET_NAME, GET_CONFIG, etc.)
-    ProcessConfigCommand();
 
     // Periodically update the average frame every 5 minutes
-    if (GetTimerCurrent("UpdateAverageFrameSecs") >= GetTimerLimitSeconds("UpdateAverageFrameSecs")) {
-        CameraCreateAvgFrame(10, "append"); // Append 10 seconds of frames to the average
-        RestartTimer("UpdateAverageFrameSecs");
-    }
-
-    if (GetTimerCurrent("OccupancyEverySecs") >= GetTimerLimitSeconds("OccupancyEverySecs")) {
-        TimeExact exactTime = WhatTimeIsItExactly();
-        Frame frame = CameraGetLatestFrame();
-        SaveLastFrameJpeg(frame);
-        g_lastOccupancyCount = CountOccupancyInFrame(frame, global_averageFrame_path);
-        CameraRelease(frame);
-        log_print(g_lastOccupancyCount);
-        RestartTimer("OccupancyEverySecs");
-
-        char timeBuf[48];
-        snprintf(timeBuf, sizeof(timeBuf),
-                 "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-                 exactTime.year, exactTime.month, exactTime.day,
-                 exactTime.hour, exactTime.minute, exactTime.second,
-                 exactTime.millisecond);
-        log_print(timeBuf);
-
-        // Log the data
-    }
 
     // Diagnostics (uncomment to log base64 payloads)
     /*

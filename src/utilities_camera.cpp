@@ -5,9 +5,12 @@
  * CameraGetLatestFrame - captures and returns a grayscale frame
  * CameraRelease - pass frame to free its buffers
  * SaveLastFrameJpeg - pass frame, saves to /last_frame.jpg
- * StartVideoRecording - pass interval in minutes, starts saving frames to SD
- * StopVideoRecording - stops recording and closes current folder
+ * StartVideoRecording - pass interval in minutes, starts saving MJPEG stream files to SD
+ * StopVideoRecording - stops recording and closes current file
  * VideoRecordingLoop - call in loop(), captures frames at target FPS
+ *
+ * NOTE: This records raw MJPEG stream files (*.mjpg): JPEG frames concatenated back-to-back.
+ * VLC can open these directly. A new file is created every intervalMinutes.
  */
 
 // utilities_camera.cpp
@@ -17,6 +20,10 @@
 #include "img_converters.h"
 #include <SD.h>
 #include <stdlib.h>
+
+static File g_videoFile;
+static bool g_videoOpen = false;
+static uint32_t g_segment = 0;
 
 // ---- camera pin config (XIAO ESP32S3 Sense) ----
 #define PWDN_GPIO_NUM     -1
@@ -40,17 +47,20 @@
 static int g_targetFps = 4;
 static int g_rotationDegrees = 0;
 char global_averageFrame_path[64] = {0};
+
 static bool g_recording = false;
 static unsigned long g_recordingStartMs = 0;
 static unsigned long g_lastFrameCaptureMs = 0;
-static unsigned long g_intervalMs = 5 * 60 * 1000; // 5 minutes default
+static unsigned long g_intervalMs = 15UL * 60UL * 1000UL; // default 15 minutes
+
 static int g_currentSessionId = 0;
 static int g_frameCount = 0;
-static char g_currentAviPath[32] = {0};
-static File g_aviFile;
-static unsigned long g_aviFrameDataSize = 0;
+
+static char g_currentVidPath[32] = {0};
+static File g_vidFile;
 
 static const char* kLastFrameJpgPath = "/last_frame.jpg";
+
 
 static bool RotateGrayFrame(const camera_fb_t* src, int degrees, camera_fb_t** outFb, uint8_t** outBuf)
 {
@@ -93,7 +103,7 @@ static bool RotateGrayFrame(const camera_fb_t* src, int degrees, camera_fb_t** o
                 dst[dstIdx] = srcBuf[srcIdx];
             }
         }
-    } else {
+    } else { // 270
         for (int y = 0; y < h; ++y) {
             for (int x = 0; x < w; ++x) {
                 const int srcIdx = y * w + x;
@@ -122,160 +132,20 @@ static bool RotateGrayFrame(const camera_fb_t* src, int degrees, camera_fb_t** o
     return true;
 }
 
-static bool SaveLastFrameJpegInternal(const Frame& frame)
+
+
+bool CameraSetup(int targetFps, const char* DEVICE_MODE)
 {
-    if (!frame.valid || !frame.fb || frame.fb->format != PIXFORMAT_GRAYSCALE) {
-        return false;
-    }
+    enum CameraMode {
+        MODE_GRAYSCALE,
+        MODE_JPEG
+    };
 
-    uint8_t* jpgBuf = nullptr;
-    size_t jpgLen = 0;
-    bool jpgOk = fmt2jpg(frame.fb->buf, frame.fb->len, frame.fb->width, frame.fb->height,
-                         PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
+    CameraMode camMode =
+        (strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0)
+            ? MODE_JPEG
+            : MODE_GRAYSCALE;
 
-    if (jpgOk && jpgBuf && jpgLen > 0) {
-        SD.remove(kLastFrameJpgPath);
-        File f = SD.open(kLastFrameJpgPath, FILE_WRITE);
-        if (f) {
-            f.write(jpgBuf, jpgLen);
-            f.close();
-        }
-        free(jpgBuf);
-        return true;
-    }
-
-    if (jpgBuf) {
-        free(jpgBuf);
-    }
-    return false;
-}
-
-// AVI header for MJPEG, filled in when closing file
-static void WriteAviHeader(File& f, int width, int height, int fps, int frameCount, unsigned long totalFrameSize)
-{
-    uint32_t usPerFrame = 1000000 / fps;
-    uint32_t aviSize = totalFrameSize + 12 + 56 + 124 + 16 + frameCount * 8;
-    
-    // RIFF header
-    f.seek(0);
-    f.write((const uint8_t*)"RIFF", 4);
-    uint32_t riffSize = aviSize - 8;
-    f.write((uint8_t*)&riffSize, 4);
-    f.write((const uint8_t*)"AVI ", 4);
-    
-    // hdrl LIST
-    f.write((const uint8_t*)"LIST", 4);
-    uint32_t hdrlSize = 192;
-    f.write((uint8_t*)&hdrlSize, 4);
-    f.write((const uint8_t*)"hdrl", 4);
-    
-    // avih chunk
-    f.write((const uint8_t*)"avih", 4);
-    uint32_t avihSize = 56;
-    f.write((uint8_t*)&avihSize, 4);
-    f.write((uint8_t*)&usPerFrame, 4);       // microseconds per frame
-    uint32_t maxBytesPerSec = width * height * fps;
-    f.write((uint8_t*)&maxBytesPerSec, 4);
-    uint32_t padding = 0;
-    f.write((uint8_t*)&padding, 4);          // padding granularity
-    uint32_t flags = 16;                      // AVIF_HASINDEX
-    f.write((uint8_t*)&flags, 4);
-    f.write((uint8_t*)&frameCount, 4);       // total frames
-    f.write((uint8_t*)&padding, 4);          // initial frames
-    uint32_t streams = 1;
-    f.write((uint8_t*)&streams, 4);
-    uint32_t bufSize = width * height;
-    f.write((uint8_t*)&bufSize, 4);
-    f.write((uint8_t*)&width, 4);
-    f.write((uint8_t*)&height, 4);
-    for (int i = 0; i < 4; i++) f.write((uint8_t*)&padding, 4); // reserved
-    
-    // strl LIST
-    f.write((const uint8_t*)"LIST", 4);
-    uint32_t strlSize = 116;
-    f.write((uint8_t*)&strlSize, 4);
-    f.write((const uint8_t*)"strl", 4);
-    
-    // strh chunk
-    f.write((const uint8_t*)"strh", 4);
-    uint32_t strhSize = 56;
-    f.write((uint8_t*)&strhSize, 4);
-    f.write((const uint8_t*)"vids", 4);
-    f.write((const uint8_t*)"MJPG", 4);
-    f.write((uint8_t*)&padding, 4);          // flags
-    uint16_t priority = 0;
-    f.write((uint8_t*)&priority, 2);
-    f.write((uint8_t*)&priority, 2);         // language
-    f.write((uint8_t*)&padding, 4);          // initial frames
-    uint32_t scale = 1;
-    f.write((uint8_t*)&scale, 4);
-    uint32_t rate = fps;
-    f.write((uint8_t*)&rate, 4);
-    f.write((uint8_t*)&padding, 4);          // start
-    f.write((uint8_t*)&frameCount, 4);       // length
-    f.write((uint8_t*)&bufSize, 4);          // suggested buffer
-    uint32_t quality = 10000;
-    f.write((uint8_t*)&quality, 4);
-    f.write((uint8_t*)&padding, 4);          // sample size
-    int16_t frame[4] = {0, 0, (int16_t)width, (int16_t)height};
-    f.write((uint8_t*)frame, 8);
-    
-    // strf chunk
-    f.write((const uint8_t*)"strf", 4);
-    uint32_t strfSize = 40;
-    f.write((uint8_t*)&strfSize, 4);
-    f.write((uint8_t*)&strfSize, 4);         // biSize
-    f.write((uint8_t*)&width, 4);
-    f.write((uint8_t*)&height, 4);
-    uint16_t planes = 1;
-    f.write((uint8_t*)&planes, 2);
-    uint16_t bitCount = 24;
-    f.write((uint8_t*)&bitCount, 2);
-    f.write((const uint8_t*)"MJPG", 4);      // compression
-    uint32_t imgSize = width * height * 3;
-    f.write((uint8_t*)&imgSize, 4);
-    for (int i = 0; i < 4; i++) f.write((uint8_t*)&padding, 4); // remaining fields
-}
-
-static void StartNewAviFile()
-{
-    g_currentSessionId++;
-    g_frameCount = 0;
-    g_aviFrameDataSize = 0;
-    snprintf(g_currentAviPath, sizeof(g_currentAviPath), "/vid_%04d.avi", g_currentSessionId);
-    
-    g_aviFile = SD.open(g_currentAviPath, FILE_WRITE);
-    if (g_aviFile)
-    {
-        // Write placeholder header (256 bytes), will rewrite when closing
-        uint8_t placeholder[256] = {0};
-        g_aviFile.write(placeholder, 256);
-        
-        // movi LIST header
-        g_aviFile.write((const uint8_t*)"LIST", 4);
-        uint32_t moviSizePlaceholder = 0;
-        g_aviFile.write((uint8_t*)&moviSizePlaceholder, 4);
-        g_aviFile.write((const uint8_t*)"movi", 4);
-    }
-}
-
-static void CloseCurrentAviFile()
-{
-    if (!g_aviFile) return;
-    
-    // Update movi LIST size
-    uint32_t moviSize = g_aviFrameDataSize + 4 + g_frameCount * 8;
-    g_aviFile.seek(260);
-    g_aviFile.write((uint8_t*)&moviSize, 4);
-    
-    // Write final header
-    WriteAviHeader(g_aviFile, 320, 240, g_targetFps, g_frameCount, g_aviFrameDataSize);
-    
-    g_aviFile.close();
-}
-
-bool CameraSetup(int targetFps)
-{
     g_targetFps = targetFps;
 
     camera_config_t config;
@@ -304,13 +174,13 @@ bool CameraSetup(int targetFps)
 
     config.xclk_freq_hz = 20000000;
 
-    config.pixel_format = PIXFORMAT_GRAYSCALE;
-    config.frame_size   = FRAMESIZE_QVGA;    // 320x240 for training data
-    config.jpeg_quality = 12;
-    config.fb_count     = 2;
+    // Grayscale for counting, or JPEG for training data?
+    config.pixel_format = (camMode == MODE_JPEG) ? PIXFORMAT_JPEG : PIXFORMAT_GRAYSCALE;
+    config.frame_size   = (camMode == MODE_JPEG) ? FRAMESIZE_VGA   : FRAMESIZE_QVGA;
+    config.jpeg_quality = (camMode == MODE_JPEG) ? 12              : 0;
+    config.fb_count     = (camMode == MODE_JPEG) ? 2               : 1;
 
     esp_err_t err = esp_camera_init(&config);
-
     if (err != ESP_OK) {
         return false;
     }
@@ -344,10 +214,6 @@ bool CameraSetFrameRotation(int degrees)
 
 Frame CameraGetLatestFrame()
 {
-
-    // Serial.println("📸"); // Careful. This will print 4 times a second if you let it
-
-    // Start with an "empty" frame so we always return something safe
     Frame out;
     out.fb = nullptr;
     out.raw_fb = nullptr;
@@ -357,19 +223,15 @@ Frame CameraGetLatestFrame()
     out.valid = false;
     out.rotated = false;
 
-    // Ask the camera for the newest picture it has
     camera_fb_t* fb = esp_camera_fb_get();
-
-    // If the camera couldn't give us a picture, return the empty frame
     if (!fb) {
-        blinkLED(2, "SOS"); // Indicate error
+        blinkLED(2, "SOS");
         return out;
     }
 
-    // We did get a picture, so fill in the details
     out.fb = fb;
     out.raw_fb = fb;
-    out.capturedMs = millis(); // "now" in milliseconds since boot
+    out.capturedMs = millis();
     out.valid = true;
 
     if (g_rotationDegrees != 0 && fb->format == PIXFORMAT_GRAYSCALE) {
@@ -383,21 +245,15 @@ Frame CameraGetLatestFrame()
         }
     }
 
-    // Give the frame back to the caller to use
     return out;
 }
 
 void CameraRelease(const Frame& frame)
 {
-    // If the frame is valid, return its buffer to the camera driver
     if (frame.valid) {
         if (frame.rotated) {
-            if (frame.rotated_buf) {
-                free(frame.rotated_buf);
-            }
-            if (frame.rotated_fb) {
-                free(frame.rotated_fb);
-            }
+            if (frame.rotated_buf) free(frame.rotated_buf);
+            if (frame.rotated_fb) free(frame.rotated_fb);
         }
 
         if (frame.raw_fb) {
@@ -405,89 +261,48 @@ void CameraRelease(const Frame& frame)
         } else if (frame.fb) {
             esp_camera_fb_return(frame.fb);
         }
-        // Serial.println("Camera buffer returned to be ready to take photos again."); // Careful. This will print 4 times a second if you let it
     }
 }
 
-bool SaveLastFrameJpeg(const Frame& frame)
-{
-    return SaveLastFrameJpegInternal(frame);
-}
 
-bool StartVideoRecording(int intervalMinutes)
+// For video (training data) mode, we initiate a new file for each segment,
+bool StartNewVideo(const char* folder)
 {
-    if (g_recording) return false;
-    
-    g_intervalMs = (unsigned long)intervalMinutes * 60UL * 1000UL;
-    g_recordingStartMs = millis();
-    g_lastFrameCaptureMs = 0;
-    g_recording = true;
-    
-    StartNewAviFile();
-    
+    if (g_videoOpen) CloseOffVideo();
+
+    if (!SD.exists(folder)) SD.mkdir(folder);
+
+    char path[96];
+    snprintf(path, sizeof(path),
+             "%s/segment_%06lu.mjpg",
+             folder,
+             (unsigned long)g_segment++);
+
+    g_videoFile = SD.open(path, FILE_WRITE);
+    if (!g_videoFile) return false;
+
+    g_videoOpen = true;
     return true;
 }
 
-void StopVideoRecording()
+// After StartnewVideo, append raw MJPEG frames to it as they come in. VLC can open these directly. 
+void AddToVideo()
 {
-    if (g_recording)
-    {
-        CloseCurrentAviFile();
-    }
-    g_recording = false;
-}
+    if (!g_videoOpen) return;
 
-// ...existing code...
-
-void VideoRecordingLoop()
-{
-    if (!g_recording) return;
-    
-    unsigned long now = millis();
-    unsigned long frameIntervalMs = 1000 / g_targetFps;
-    
-    // Check if it's time for a new frame
-    if (now - g_lastFrameCaptureMs < frameIntervalMs) return;
-    g_lastFrameCaptureMs = now;
-    
-    // Check if interval elapsed, start new file
-    if (now - g_recordingStartMs >= g_intervalMs)
-    {
-        CloseCurrentAviFile();
-        StartNewAviFile();
-        g_recordingStartMs = now;
-    }
-    
-    // Capture frame
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) return;
-    
-    // Convert to JPEG
-    uint8_t* jpgBuf = nullptr;
-    size_t jpgLen = 0;
-    bool converted = frame2jpg(fb, 80, &jpgBuf, &jpgLen);
-    
-    if (converted && jpgBuf && g_aviFile)
-    {
-        // Write frame chunk: "00dc" + size + data (padded to even)
-        g_aviFile.write((const uint8_t*)"00dc", 4);
-        uint32_t chunkSize = jpgLen;
-        g_aviFile.write((uint8_t*)&chunkSize, 4);
-        g_aviFile.write(jpgBuf, jpgLen);
-        
-        // Pad to even byte boundary
-        if (jpgLen % 2 == 1)
-        {
-            uint8_t pad = 0;
-            g_aviFile.write(&pad, 1);
-            g_aviFrameDataSize++;
-        }
-        
-        g_aviFrameDataSize += 8 + jpgLen;
-        g_frameCount++;
-        
-        free(jpgBuf);
-    }
-    
+
+    g_videoFile.write(fb->buf, fb->len);
+
     esp_camera_fb_return(fb);
+}
+
+void CloseOffVideo()
+{
+    if (!g_videoOpen) return;
+
+    g_videoFile.flush();
+    g_videoFile.close();
+    g_videoOpen = false;
 }
