@@ -15,16 +15,16 @@
 
 // For Seeed XIAO ESP32-S3, the built-in LED is typically on pin 21
 // But LED_BUILTIN should work if defined correctly in the board files
-#ifndef LED_BUILTIN
-#define LED_BUILTIN 21
-#endif
+// #ifndef LED_BUILTIN
+// #define LED_BUILTIN 21
+// #endif
 
 
 // CONFIG
 //==================================================
 // ---- adjust these as needed ----
 // ENTEREXIT, OCCUPANCY, VIDEO_FOR_TRAINING (for training)
-const char* DEVICE_MODE = "VIDEO_FOR_TRAINING"; 
+const char* DEVICE_MODE = "ENTEREXIT"; 
 const int CAMERA_FPS = 4;
 
 // Video mode
@@ -55,15 +55,6 @@ void setup() {
   Serial.begin(9600);
   delay(5000);
 
-  // // Initialize config from NVS (must be called before using config getters)
-  // ConfigInit();
-  
-  // if (GetDeviceName().length() > 0) {
-  //   log_print(String("Device Name: ") + GetDeviceName());
-  // } else {
-  //   log_print("No device name set in preferences.");
-  // }
-
   log_print(DEVICE_MODE);
   
   // What mode?
@@ -76,7 +67,7 @@ void setup() {
     CreateTimer("OccupancyEverySecs", OCCUPANCY_EVERY_SECS);
     CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 5 minutes
   } else if (strcmp(DEVICE_MODE, "ENTEREXIT") == 0) {
-    log_print("ENTEREXIT mode - not implemented yet");
+    log_print("ENTEREXIT mode ");
   } else {
     log_print(String("Unknown DEVICE_MODE: ") + DEVICE_MODE);
   }
@@ -120,24 +111,20 @@ void setup() {
     log_print("WiFi connection failed.");
   }
 
-  if (cameraOk && sdOk && strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") != 0) {
-    log_print("Creating initial average frame...");
-    CameraCreateAvgFrame(10, "new"); // Create average frame over 10 seconds
-    // Remove the StartVideoRecording call from here - it's handled in loop()
-  }
-
 }
 
 void loop() {
 
-    // Whatever the mode, you're gonna want the frame and the time
-    TimeExact exactTime = WhatTimeIsItExactly();
-    Frame frame = CameraGetLatestFrame();          
+ 
 
     // Poll the remote serial interface for incoming data
     remote_serial_poll();    
 
     if ( strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0 ) {
+      // Whatever the mode, you're gonna want the frame and the time
+      TimeExact exactTime = WhatTimeIsItExactly();
+      Frame frame = CameraGetLatestFrame();         
+
       //================================================================
       // VIDEO mode
       // In this mode, we save a new video file every HOW_OFTEN_SAVE_VIDEO_FROM_JPG seconds by capturing a JPG frame and appending it to the MJPEG stream file. 
@@ -156,48 +143,35 @@ void loop() {
     } else {
       //================================
       // OCCUPANCY or ENTEREXIT mode
-      //================================
+      //================================     
 
-      // Average frame
-      if (GetTimerCurrent("UpdateAverageFrameSecs") >= GetTimerLimitSeconds("UpdateAverageFrameSecs")) {
-          CameraCreateAvgFrame(10, "append"); // Append 10 seconds of frames to the average
-          RestartTimer("UpdateAverageFrameSecs");
-      }      
+      if ( strcmp(DEVICE_MODE, "ENTEREXIT") == 0 ) {
+        
+        // Capture frame 1 and save to memory
+        camera_fb_t* frame1stFB = esp_camera_fb_get();     
+        uint8_t* frame1stData = (uint8_t*)malloc(frame1stFB->len);
+        memcpy(frame1stData, frame1stFB->buf, frame1stFB->len);
+        size_t frame1stLen = frame1stFB->len;
+        esp_camera_fb_return(frame1stFB);    
 
-      if ( strcmp(DEVICE_MODE, "OCCUPANCY") == 0 ) {
-        if (GetTimerCurrent("OccupancyEverySecs") >= GetTimerLimitSeconds("OccupancyEverySecs")) {
-            TimeExact exactTime = WhatTimeIsItExactly();
-            Frame frame = CameraGetLatestFrame();
-            // SaveLastFrameJpeg(frame);
-            g_lastOccupancyCount = CountOccupancyInFrame(frame, global_averageFrame_path);
-            CameraRelease(frame);
-            log_print(g_lastOccupancyCount);
-            RestartTimer("OccupancyEverySecs");
-
-            char timeBuf[48];
-            snprintf(timeBuf, sizeof(timeBuf),
-                    "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-                    exactTime.year, exactTime.month, exactTime.day,
-                    exactTime.hour, exactTime.minute, exactTime.second,
-                    exactTime.millisecond);
-            log_print(timeBuf);
-
-            // Log the data
-        } else if ( strcmp(DEVICE_MODE, "ENTEREXIT") == 0 ) {
-          log_print("ENTEREXIT mode - not implemented yet");
-        }     
+        // Capture frame 2 and save to memory
+        camera_fb_t* frame2ndFB = esp_camera_fb_get();     
+        uint8_t* frame2ndData = (uint8_t*)malloc(frame2ndFB->len);
+        memcpy(frame2ndData, frame2ndFB->buf, frame2ndFB->len);
+        size_t frame2ndLen = frame2ndFB->len;
+        esp_camera_fb_return(frame2ndFB);          
+        
+          if (FrameHasMotion(frame1stData, frame2ndData, frame1stLen)) {
+            log_print("Motion detected!");
+          }            
+        
+        free(frame1stData);
+        frame1stData = nullptr;
+        free(frame2ndData);
+        frame2ndData = nullptr;
 
       }
 
     }
 
-    // Periodically update the average frame every 5 minutes
-
-    // Diagnostics (uncomment to log base64 payloads)
-    /*
-    log_print_jpeg_file("average_frame", "/avg_frame_current.jpg");
-    log_print_jpeg_file("last_frame", "/last_frame.jpg");
-    log_print_jpeg_file("last_diff", "/last_diff.jpg");
-    log_print(g_lastOccupancyCount);
-    */
 }

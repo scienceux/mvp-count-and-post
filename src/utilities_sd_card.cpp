@@ -21,14 +21,14 @@ bool setupSDCard() {
     // Get card type
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
-        Serial.println("SD card setup failed!");
+        Serial.println("Is card inserted?");
         return false;
     }
     
     // Test write functionality
     File file = SD.open("/test.txt", FILE_WRITE);
     if (!file) {
-        Serial.println("SD card setup failed!");
+        Serial.println("Failed to open file for writing!");
         return false;
     }
     
@@ -39,7 +39,7 @@ bool setupSDCard() {
     // Test read functionality
     file = SD.open("/test.txt");
     if (!file) {
-        Serial.println("SD card setup failed!");
+        Serial.println("Failed to open file for reading!");
         return false;
     }
     
