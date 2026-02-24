@@ -176,7 +176,7 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
 
     // Grayscale for counting, or JPEG for training data?
     config.pixel_format = (camMode == MODE_JPEG) ? PIXFORMAT_JPEG : PIXFORMAT_GRAYSCALE;
-    config.frame_size   = (camMode == MODE_JPEG) ? FRAMESIZE_VGA   : FRAMESIZE_QVGA;
+    config.frame_size   = (camMode == MODE_JPEG) ? FRAMESIZE_VGA   : FRAMESIZE_VGA;
     config.jpeg_quality = (camMode == MODE_JPEG) ? 12              : 0;
     config.fb_count     = (camMode == MODE_JPEG) ? 2               : 1;
 
@@ -247,6 +247,8 @@ Frame CameraGetLatestFrame()
 
     return out;
 }
+
+
 
 void CameraRelease(const Frame& frame)
 {

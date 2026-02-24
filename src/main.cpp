@@ -111,6 +111,9 @@ void setup() {
     log_print("WiFi connection failed.");
   }
 
+  
+  turnOffLED();
+
 }
 
 void loop() {
@@ -147,28 +150,41 @@ void loop() {
 
       if ( strcmp(DEVICE_MODE, "ENTEREXIT") == 0 ) {
         
-        // Capture frame 1 and save to memory
-        camera_fb_t* frame1stFB = esp_camera_fb_get();     
-        uint8_t* frame1stData = (uint8_t*)malloc(frame1stFB->len);
-        memcpy(frame1stData, frame1stFB->buf, frame1stFB->len);
-        size_t frame1stLen = frame1stFB->len;
-        esp_camera_fb_return(frame1stFB);    
+        
+        // // Working motion sensor
+        // //===============================================
+        // // Capture frame 1 and save to memory
+        // camera_fb_t* prev_frameFB = esp_camera_fb_get();     
+        // uint8_t* prev_frameData = (uint8_t*)malloc(prev_frameFB->len);
+        // memcpy(prev_frameData, prev_frameFB->buf, prev_frameFB->len);
+        // size_t prev_frameLen = prev_frameFB->len;
+        // esp_camera_fb_return(prev_frameFB);    
 
-        // Capture frame 2 and save to memory
-        camera_fb_t* frame2ndFB = esp_camera_fb_get();     
-        uint8_t* frame2ndData = (uint8_t*)malloc(frame2ndFB->len);
-        memcpy(frame2ndData, frame2ndFB->buf, frame2ndFB->len);
-        size_t frame2ndLen = frame2ndFB->len;
-        esp_camera_fb_return(frame2ndFB);          
+        // // Capture frame 2 and save to memory
+        // camera_fb_t* current_frameFB = esp_camera_fb_get();     
+        // uint8_t* current_frameData = (uint8_t*)malloc(current_frameFB->len);
+        // memcpy(current_frameData, current_frameFB->buf, current_frameFB->len);
+        // size_t current_frameLen = current_frameFB->len;
+        // esp_camera_fb_return(current_frameFB);          
         
-          if (FrameHasMotion(frame1stData, frame2ndData, frame1stLen)) {
-            log_print("Motion detected!");
-          }            
+        //   if (FrameHasMotion(prev_frameData, current_frameData, prev_frameLen)) {
+        //     turnOnLED();
+        //     log_print("Motion detected!");
+        //   }            
         
-        free(frame1stData);
-        frame1stData = nullptr;
-        free(frame2ndData);
-        frame2ndData = nullptr;
+        // free(prev_frameData);
+        // prev_frameData = nullptr;
+        // free(current_frameData);
+        // current_frameData = nullptr;
+        //  turnOffLED();
+
+        // Enter/Exit counting mode
+        //===============================================
+        SplitFrame prev_frame = CameraGetSplitFrame();
+        delay(100);
+        SplitFrame current_frame = CameraGetSplitFrame();
+
+        EnterExitDetector(prev_frame, current_frame);
 
       }
 
