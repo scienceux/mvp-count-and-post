@@ -91,6 +91,7 @@ bool FrameHasMotion(uint8_t* prev_frame, uint8_t* current_frame, size_t len)
 }
 
 bool enterStarted = false;
+bool exitStarted = false;
 
 bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_split) {
     uint32_t changeInBrightnessLeft  = abs(current_frame_split.leftBrightness  - prev_frame_split.leftBrightness);
@@ -98,13 +99,34 @@ bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_spl
     uint32_t threshold = 1000000; // Total brightness can reach into the tens of millions, so this threshold is in the millions.
     // log_print("Change in brightness:    " + String(changeInBrightnessLeft)    + " | " + String(changeInBrightnessRight));
 
-    if ( (changeInBrightnessLeft > changeInBrightnessRight) && (changeInBrightnessLeft > threshold) ) {
+    if ( !enterStarted && !exitStarted ) {
+        if ( (changeInBrightnessLeft > changeInBrightnessRight) && (changeInBrightnessLeft > threshold) ) {
+            enterStarted = true;
+            log_print("Enter started");
+        } else if ( (changeInBrightnessRight > changeInBrightnessLeft) && (changeInBrightnessRight > threshold) ) {
+            exitStarted = true;
+            log_print("Exit started");
+        }
+    }
+
+    // Then they cross into other half of frame, so we know they fully entered or exited
+    if ( enterStarted && (changeInBrightnessRight > threshold) ) {
+        enterStarted = false;
         log_print("Enter");
         return true;
-    } else if ( (changeInBrightnessRight > changeInBrightnessLeft) && (changeInBrightnessRight > threshold) ) {
+    } else if ( exitStarted && (changeInBrightnessLeft > threshold) ) {
+        exitStarted = false;
         log_print("Exit");
         return true;
     }
+
+    if ( (enterStarted || exitStarted) && (changeInBrightnessLeft < threshold) && (changeInBrightnessRight < threshold) ) {
+        enterStarted = false;
+        exitStarted = false;
+        log_print("Reset");
+        return true;
+    } 
+
 
     return false;  
 
