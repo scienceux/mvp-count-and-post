@@ -185,13 +185,20 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
         return false;
     }
 
-    sensor_t* s = esp_camera_sensor_get();
+    sensor_t* sensor = esp_camera_sensor_get();
 
     // optional defaults
-    s->set_gain_ctrl(s, 0);
-    s->set_exposure_ctrl(s, 0);
-    s->set_whitebal(s, 0);
-    s->set_awb_gain(s, 0);
+    sensor->set_gain_ctrl(sensor, 0); // Disable auto-gain because that f's with brightness
+    sensor->set_agc_gain(sensor, 8);
+
+    sensor->set_exposure_ctrl(sensor, 0);
+    sensor->set_aec_value(sensor, 300); 
+
+    sensor->set_whitebal(sensor, 0);
+    sensor->set_awb_gain(sensor, 0);
+
+    sensor->set_bpc(sensor, 0);              // disable bad pixel correction
+    sensor->set_wpc(sensor, 0);              // disable white pixel correction    
 
     return true;
 }
@@ -212,38 +219,28 @@ bool CameraSetFrameRotation(int degrees)
     return false;
 }
 
-Frame CameraGetLatestFrame()
+Frame CameraGetCopyOfLatestFrame()
 {
     Frame out;
-    out.fb = nullptr;
-    out.raw_fb = nullptr;
-    out.rotated_fb = nullptr;
-    out.rotated_buf = nullptr;
-    out.capturedMs = 0;
+    out.copyOfbufferInMemory = nullptr;
+    out.timecaptured = 0;
     out.valid = false;
-    out.rotated = false;
 
+    // Pull eyeball out of socket to get latest frame
     camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) {
-        blinkLED(2, "SOS");
-        return out;
-    }
 
-    out.fb = fb;
-    out.raw_fb = fb;
-    out.capturedMs = millis();
+    // Pave a parking space in memory for our (numberic) pixel data of size fb->len
+    out.copyOfbufferInMemory = (uint32_t*)malloc(fb->len);
+
+    // Park actual pixel data into our parking space
+    memcpy(out.copyOfbufferInMemory, fb->buf, fb->len);
+
+    // Give it our standard metadata
+    out.timecaptured = millis();
     out.valid = true;
 
-    if (g_rotationDegrees != 0 && fb->format == PIXFORMAT_GRAYSCALE) {
-        camera_fb_t* rotated_fb = nullptr;
-        uint8_t* rotated_buf = nullptr;
-        if (RotateGrayFrame(fb, g_rotationDegrees, &rotated_fb, &rotated_buf)) {
-            out.fb = rotated_fb;
-            out.rotated_fb = rotated_fb;
-            out.rotated_buf = rotated_buf;
-            out.rotated = true;
-        }
-    }
+    // Put eyeball back in socket to free driver buffers
+    esp_camera_fb_return(fb);
 
     return out;
 }
@@ -253,21 +250,34 @@ Frame CameraGetLatestFrame()
 void CameraRelease(const Frame& frame)
 {
     if (frame.valid) {
-        if (frame.rotated) {
-            if (frame.rotated_buf) free(frame.rotated_buf);
-            if (frame.rotated_fb) free(frame.rotated_fb);
-        }
-
-        if (frame.raw_fb) {
-            esp_camera_fb_return(frame.raw_fb);
-        } else if (frame.fb) {
-            esp_camera_fb_return(frame.fb);
-        }
+        esp_camera_fb_return((camera_fb_t*)frame.copyOfbufferInMemory);
     }
 }
 
+// bool SaveLastFrameJpeg(const Frame& frame)
+// {
+//     if (!frame.valid || !frame.copyOfbufferInMemory) return false;
 
-// For video (training data) mode, we initiate a new file for each segment,
+//     uint8_t* jpgBuf = nullptr;
+//     size_t   jpgLen = 0;
+
+//     // Convert grayscale buffer to JPEG in memory
+//     bool ok = fmt2jpg((uint8_t*)frame.copyOfbufferInMemory, frame.fb->len,
+//                       frame.fb->width, frame.fb->height,
+//                       PIXFORMAT_GRAYSCALE, 80,
+//                       &jpgBuf, &jpgLen);
+//     if (!ok || !jpgBuf) return false;
+
+//     // Write to SD card, overwriting any previous file
+//     File f = SD.open(kLastFrameJpgPath, FILE_WRITE);
+//     if (!f) { free(jpgBuf); return false; }
+//     f.write(jpgBuf, jpgLen);
+//     f.close();
+
+//     free(jpgBuf);
+//     return true;
+// }
+
 bool StartNewVideo(const char* folder)
 {
     if (g_videoOpen) CloseOffVideo();

@@ -117,77 +117,28 @@ void setup() {
 }
 
 void loop() {
-
  
-
-    // Poll the remote serial interface for incoming data
-    remote_serial_poll();    
-
-    if ( strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0 ) {
-      // Whatever the mode, you're gonna want the frame and the time
-      TimeExact exactTime = WhatTimeIsItExactly();
-      Frame frame = CameraGetLatestFrame();         
-
-      //================================================================
-      // VIDEO mode
-      // In this mode, we save a new video file every HOW_OFTEN_SAVE_VIDEO_FROM_JPG seconds by capturing a JPG frame and appending it to the MJPEG stream file. 
-      // StartVideoRecording(1);  // new video file every 1 minute      
-      //================================================================
-      if (GetTimerCurrent("SaveMJpeg") >= GetTimerLimitSeconds("SaveMJpeg")) {
-        CloseOffVideo();
-        StartNewVideo(VIDEO_SAVE_FOLDER);
-        RestartTimer("SaveMJpeg");
-      } else {
-        AddToVideo();
-      }
-
-      return;
-
-    } else {
       //================================
       // OCCUPANCY or ENTEREXIT mode
       //================================     
+    // Poll the remote serial interface for incoming data
+    remote_serial_poll();
 
-      if ( strcmp(DEVICE_MODE, "ENTEREXIT") == 0 ) {
-        
-        
-        // // Working motion sensor
-        // //===============================================
-        // // Capture frame 1 and save to memory
-        // camera_fb_t* prev_frameFB = esp_camera_fb_get();     
-        // uint8_t* prev_frameData = (uint8_t*)malloc(prev_frameFB->len);
-        // memcpy(prev_frameData, prev_frameFB->buf, prev_frameFB->len);
-        // size_t prev_frameLen = prev_frameFB->len;
-        // esp_camera_fb_return(prev_frameFB);    
+    // Save copy of one frame to memory, then release it so camera can reuse the buffer (and we don't run out of memory)
+    Frame prev_frame = CameraGetCopyOfLatestFrame();
+    delay(100);
+    Frame current_frame = CameraGetCopyOfLatestFrame();
 
-        // // Capture frame 2 and save to memory
-        // camera_fb_t* current_frameFB = esp_camera_fb_get();     
-        // uint8_t* current_frameData = (uint8_t*)malloc(current_frameFB->len);
-        // memcpy(current_frameData, current_frameFB->buf, current_frameFB->len);
-        // size_t current_frameLen = current_frameFB->len;
-        // esp_camera_fb_return(current_frameFB);          
-        
-        //   if (FrameHasMotion(prev_frameData, current_frameData, prev_frameLen)) {
-        //     turnOnLED();
-        //     log_print("Motion detected!");
-        //   }            
-        
-        // free(prev_frameData);
-        // prev_frameData = nullptr;
-        // free(current_frameData);
-        // current_frameData = nullptr;
-        //  turnOffLED();
+    SplitFrame prev_frame_split = CameraGetSplitFrame(prev_frame);
+    SplitFrame current_frame_split = CameraGetSplitFrame(current_frame);
 
-        // Enter/Exit counting mode
-        //===============================================
-        SplitFrame prev_frame = CameraGetSplitFrame();
-        delay(100);
-        SplitFrame current_frame = CameraGetSplitFrame();
-
-        EnterExitDetector(prev_frame, current_frame);
-
-      }
-
+    if ( EnterExitDetector(prev_frame_split, current_frame_split) ) {
+      // SaveLastFrameJpeg(current_frame);  
+      // log_print("Prev:    " + String(prev_frame_split.leftBrightness)    + " | " + String(prev_frame_split.rightBrightness));
+      // log_print("Current: " + String(current_frame_split.leftBrightness) + " | " + String(current_frame_split.rightBrightness));
     }
+
+    free(prev_frame.copyOfbufferInMemory);
+    free(current_frame.copyOfbufferInMemory);
 
 }

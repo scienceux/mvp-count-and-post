@@ -16,14 +16,16 @@ const int FH = 480;
 const int SplitWidth = FW / 2;
 
 
-SplitFrame CameraGetSplitFrame() {
+SplitFrame CameraGetSplitFrame(Frame frameToSplit) {
 
-    static int32_t temp_frame[2] = { 0 };
+    static int64_t temp_frame[2] = { 0 };  // int32 can hold it but int64 is safer
     temp_frame[0] = 0;
     temp_frame[1] = 0;
 
-    // capture image from camera
-    camera_fb_t *frame_buffer = esp_camera_fb_get();          // capture frame from camera
+    if (!frameToSplit.copyOfbufferInMemory ) {
+        log_print("CameraGetSplitFrame: null frame");
+        return SplitFrame{ 0, 0 };
+    }
 
     // convert frame into 2D array x/y coord of pixel brightness values (0 to 255)
     for (uint32_t i = 0; i < (FW * FH); i++) {         // step through all pixels in image
@@ -43,14 +45,17 @@ SplitFrame CameraGetSplitFrame() {
       // pixels with x >= 320 → block_x = 1 (right half).
       const uint8_t whichside_x = floor(x / SplitWidth); 
 
-      const int32_t pixelBrightness = frame_buffer->buf[i];             // get the pixels brightness (0 to 255)
+      const uint32_t pixelBrightness = ((uint8_t*)frameToSplit.copyOfbufferInMemory)[i];             // get the pixels brightness (0 to 255)
 
 
       temp_frame[whichside_x] += pixelBrightness;                 
     }
 
-    esp_camera_fb_return(frame_buffer);                       // return frame so memory can be released
-
+    // Give total brightness sane, readable values
+    // raw values like: -605470922 | -1421458258
+    // int32_t divisor = 1000000; // divisor to get brightness into a more manageable range (millions) for easier thresholding
+    // temp_frame[0] /= divisor; // divide by 1000 to get smaller numbers that are easier to reason about and set thresholds for
+    // temp_frame[1] /= divisor; // divide by 1000 to get smaller numbers that are easier to reason about and set thresholds for
 
     // Returns as .leftBrightness and .rightBrightness the total brightness of all pixels in the left and right halves of the frame, respectively.
     // as defined in .h file, SplitFrame struct has .leftBrightness and .rightBrightness fields for this purpose.
@@ -87,32 +92,20 @@ bool FrameHasMotion(uint8_t* prev_frame, uint8_t* current_frame, size_t len)
 
 bool enterStarted = false;
 
-void EnterExitDetector(SplitFrame prev_frame, SplitFrame current_frame) {
-    uint32_t changeInBrightnessLeft  = abs(current_frame.leftBrightness  - prev_frame.leftBrightness);
-    uint32_t changeInBrightnessRight = abs(current_frame.rightBrightness - prev_frame.rightBrightness);
-    uint32_t threshold = 100000; // TODO - figure out good threshold for this
+bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_split) {
+    uint32_t changeInBrightnessLeft  = abs(current_frame_split.leftBrightness  - prev_frame_split.leftBrightness);
+    uint32_t changeInBrightnessRight = abs(current_frame_split.rightBrightness - prev_frame_split.rightBrightness);
+    uint32_t threshold = 1000000; // Total brightness can reach into the tens of millions, so this threshold is in the millions.
+    // log_print("Change in brightness:    " + String(changeInBrightnessLeft)    + " | " + String(changeInBrightnessRight));
 
     if ( (changeInBrightnessLeft > changeInBrightnessRight) && (changeInBrightnessLeft > threshold) ) {
-        log_print("Enter detected!");
+        log_print("Enter");
+        return true;
     } else if ( (changeInBrightnessRight > changeInBrightnessLeft) && (changeInBrightnessRight > threshold) ) {
-        log_print("Exit detected!");
+        log_print("Exit");
+        return true;
     }
 
-    // // I think this initializes arrays containing pixels at different coordinates in each frame.
-    // uint16_t prev_frame[FH][FW] = { 0 };      
-    // uint16_t current_frame[FH][FW] = { 0 };   
-
-    // // For the number of pixels high this is, loop through each pixel of the width.
-    // for (int y = 0; y < FH; y++) {
-    //     for (int x = 0; x < FW; x++) {
-    //         uint16_t current = current_frame[y][x];
-    //         uint16_t prev = prev_frame[y][x];
-    //         uint16_t pChange = abs(current - prev);          // modified code Feb20 - gives blocks average pixels variation in range 0 to 255
-
-    //         if (pChange >= tThreshold) {                     // if change in block is enough to qualify as changed
-    //           if (block_active(x,y)) changes += 1;           // if detection mask is enabled for this block increment changed block count
-    //         }
-    //     }
-    // }        
+    return false;  
 
 }

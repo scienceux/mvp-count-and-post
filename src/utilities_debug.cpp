@@ -91,13 +91,13 @@ namespace
     html += ".label{margin-top:14px;font-weight:bold;}</style></head><body>";
 
     const unsigned long cacheBust = millis();
-    html += "<h3>Diagnostics</h3>";
-    html += "<div class='label'>Average frame</div>";
-    html += "<img src='/image?name=average&t=" + String(cacheBust) + "'>";
+    // html += "<h3>Diagnostics</h3>";
+    // html += "<div class='label'>Average frame</div>";
+    // html += "<img src='/image?name=average&t=" + String(cacheBust) + "'>";
     html += "<div class='label'>Last frame</div>";
     html += "<img src='/image?name=last_frame&t=" + String(cacheBust) + "'>";
-    html += "<div class='label'>Last diff</div>";
-    html += "<img src='/image?name=last_diff&t=" + String(cacheBust) + "'>";
+    // html += "<div class='label'>Last diff</div>";
+    // html += "<img src='/image?name=last_diff&t=" + String(cacheBust) + "'>";
 
     html += "<h3>Remote Log</h3><pre>";
     html += build_log_text();
