@@ -2,6 +2,14 @@
 
 #include <Arduino.h>
 
+// Photo capture (triggered from remote web UI)
+// Returns true once if user pressed 'Take Photo'. outPath is filled with
+// the suggested SD path (e.g. "/snap_003.jpg").
+bool remote_take_photo_pending(char* outPath, size_t pathSize);
+
+// Call after saving a photo to register it in the web gallery.
+void remote_register_photo(const char* path);
+
 // Remote serial (HTTP) monitoring
 void turn_on_remote_serial_monitoring();
 void remote_serial_poll();

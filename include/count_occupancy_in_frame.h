@@ -23,5 +23,6 @@ SplitFrame CameraGetSplitFrame(Frame frameToSplit);
 
 // Detects enter/exit events based on changes in brightness between two frames
 bool EnterExitDetector(SplitFrame prev_frame, SplitFrame current_frame);
+bool EnterExitDetector_v2_wAvg();
 
 #endif // COUNT_OCCUPANCY_IN_FRAME_H

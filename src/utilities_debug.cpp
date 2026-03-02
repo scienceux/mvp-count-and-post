@@ -5,6 +5,9 @@
 #include <string.h>
 #include <SD.h>
 
+extern int g_EntersCount;
+extern int g_ExitsCount;
+
 namespace
 {
   WebServer g_httpServer(80);
@@ -16,6 +19,12 @@ namespace
   size_t g_logCount = 0;
   size_t g_logIndex = 0;
   String g_currentLine;
+
+  // --- Photo capture ---
+  bool g_takePhotoRequested = false;
+  constexpr size_t kMaxPhotos = 20;
+  String g_photoPaths[kMaxPhotos];
+  size_t g_photoCount = 0;
 
   void append_line(const String& line)
   {
@@ -43,6 +52,60 @@ namespace
     }
 
     return out;
+  }
+
+  // Returns log lines as HTML divs, newest first.
+  String build_log_html()
+  {
+    String out;
+    out.reserve(4096);
+
+    // Current (incomplete) line is the very latest — show it first.
+    if (g_currentLine.length() > 0) {
+      out += "<div>";
+      out += g_currentLine;
+      out += "</div>";
+    }
+
+    // Iterate completed lines newest-first.
+    for (size_t i = 0; i < g_logCount; ++i) {
+      const size_t idx = (g_logIndex + kMaxLines - 1 - i) % kMaxLines;
+      out += "<div>";
+      out += g_logLines[idx];
+      out += "</div>";
+    }
+
+    return out;
+  }
+
+  // Serve a snapped photo from SD by path query param.
+  void handle_photo()
+  {
+    String name = g_httpServer.arg("name");
+    if (name.length() == 0 || name.indexOf("..") >= 0) {
+      g_httpServer.send(400, "text/plain", "bad name");
+      return;
+    }
+    String path = "/" + name;
+    if (!SD.exists(path.c_str())) {
+      g_httpServer.send(404, "text/plain", "not found");
+      return;
+    }
+    File f = SD.open(path.c_str(), FILE_READ);
+    if (!f) {
+      g_httpServer.send(500, "text/plain", "open failed");
+      return;
+    }
+    g_httpServer.streamFile(f, "image/jpeg");
+    f.close();
+  }
+
+  // Button press: flag a capture and redirect back.
+  void handle_take_photo()
+  {
+    g_takePhotoRequested = true;
+    g_httpServer.sendHeader("Location", "/", true);
+    g_httpServer.send(302, "text/plain", "");
   }
 
   const char* resolve_image_path(const String& name)
@@ -86,7 +149,8 @@ namespace
     html += "<meta http-equiv='refresh' content='2'>";
     html += "<title>Remote Log</title>";
     html += "<style>body{font-family:monospace;padding:12px;background:#0b0b0b;color:#e7e7e7;}";
-    html += "pre{white-space:pre-wrap;word-break:break-word;}";
+    html += ".log-box{height:480px;overflow-y:auto;background:#111;padding:8px 10px;border:1px solid #333;}";
+    html += ".log-box div{white-space:pre-wrap;word-break:break-word;line-height:1.4;}";
     html += "img{height:400px;width:auto;display:block;margin:8px 0;border:1px solid #333;}";
     html += ".label{margin-top:14px;font-weight:bold;}</style></head><body>";
 
@@ -94,14 +158,36 @@ namespace
     // html += "<h3>Diagnostics</h3>";
     // html += "<div class='label'>Average frame</div>";
     // html += "<img src='/image?name=average&t=" + String(cacheBust) + "'>";
-    html += "<div class='label'>Last frame</div>";
-    html += "<img src='/image?name=last_frame&t=" + String(cacheBust) + "'>";
+    // html += "<div class='label'>Last frame</div>";
+    // html += "<img src='/image?name=last_frame&t=" + String(cacheBust) + "'>";
     // html += "<div class='label'>Last diff</div>";
     // html += "<img src='/image?name=last_diff&t=" + String(cacheBust) + "'>";
 
-    html += "<h3>Remote Log</h3><pre>";
-    html += build_log_text();
-    html += "</pre></body></html>";
+    html += "<h3>";
+    html += "Enters: " + String(g_EntersCount) + " | Exits: " + String(g_ExitsCount) + "</h3>";
+    html += "<div class='log-box'>";
+    html += build_log_html();
+    html += "</div>";
+
+    // Take Photo button
+    html += "<form method='POST' action='/take_photo' style='margin:14px 0;'>";
+    html += "<button type='submit' style='padding:8px 18px;font-size:1em;cursor:pointer;";
+    html += "background:#1a6aff;color:#fff;border:none;border-radius:4px;font-family:monospace;'>";
+    html += "Take Photo</button></form>";
+
+    // Photo gallery
+    if (g_photoCount > 0) {
+      html += "<div class='label'>Snapped photos ("+String(g_photoCount)+")</div>";
+      for (size_t i = g_photoCount; i > 0; --i) {
+        // Strip leading '/' for the query param (handler re-adds it)
+        String name = g_photoPaths[i - 1];
+        if (name.startsWith("/")) name = name.substring(1);
+        html += "<div class='label' style='font-size:0.85em;color:#aaa;'>" + name + "</div>";
+        html += "<img src='/photo?name=" + name + "&t=" + String(cacheBust) + "'>";
+      }
+    }
+
+    html += "</body></html>";
     g_httpServer.send(200, "text/html", html);
   }
 
@@ -149,6 +235,8 @@ void turn_on_remote_serial_monitoring()
   g_httpServer.on("/", handle_root);
   g_httpServer.on("/log", handle_log);
   g_httpServer.on("/image", handle_image);
+  g_httpServer.on("/photo", handle_photo);
+  g_httpServer.on("/take_photo", HTTP_POST, handle_take_photo);
   g_httpServer.begin();
   g_serverStarted = true;
 
@@ -180,6 +268,31 @@ void remote_serial_println(const char* text)
 void enable_remote_serial(bool enabled)
 {
   g_remoteEnabled = enabled;
+}
+
+// Returns true once if a photo was requested via the web UI.
+// outPath receives the suggested SD path, e.g. "/snap_003.jpg".
+bool remote_take_photo_pending(char* outPath, size_t pathSize)
+{
+  if (!g_takePhotoRequested) return false;
+  g_takePhotoRequested = false;
+  if (outPath && pathSize > 0) {
+    snprintf(outPath, pathSize, "/snap_%03u.jpg", (unsigned)g_photoCount);
+  }
+  return true;
+}
+
+// Call after successfully saving a photo to register it in the gallery.
+void remote_register_photo(const char* path)
+{
+  if (!path) return;
+  if (g_photoCount < kMaxPhotos) {
+    g_photoPaths[g_photoCount++] = String(path);
+  } else {
+    // Overwrite oldest (ring)
+    g_photoPaths[g_photoCount % kMaxPhotos] = String(path);
+    g_photoCount++;
+  }
 }
 
 // Logging helpers (always prints a newline)

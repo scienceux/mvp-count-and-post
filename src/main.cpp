@@ -45,9 +45,11 @@ const char* WIFI_PASS = "money4connie";
 
 
 
-
 // Track most recent occupancy result so we can skip baseline updates when occupied.
 static int g_lastOccupancyCount = 0;
+
+int g_EntersCount = 0;
+int g_ExitsCount = 0;
 
 
 void setup() {
@@ -61,11 +63,10 @@ void setup() {
   //================================
   if (strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0) {
     CreateTimer("SaveMJpeg", HOW_OFTEN_SAVE_VIDEO_FROM_JPG);
-    StartNewVideo(VIDEO_SAVE_FOLDER);
 
   } else if (strcmp(DEVICE_MODE, "OCCUPANCY") == 0) {
     CreateTimer("OccupancyEverySecs", OCCUPANCY_EVERY_SECS);
-    CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 5 minutes
+
   } else if (strcmp(DEVICE_MODE, "ENTEREXIT") == 0) {
     log_print("ENTEREXIT mode ");
   } else {
@@ -82,7 +83,6 @@ void setup() {
 
   bool cameraOk = CameraSetup(CAMERA_FPS, DEVICE_MODE);
   if (cameraOk) {
-    CameraSetFrameRotation(90);
     log_print("Camera setup successful.");
     blinkLED(2, "fast");
   } else {
@@ -111,32 +111,45 @@ void setup() {
     log_print("WiFi connection failed.");
   }
 
-  
+  CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 60 seconds
+  turnOnLED();
+  AverageFrameCreate(10); // Average frames for first 10 seconds to create initial average frame
   turnOffLED();
 
 }
 
 void loop() {
  
-      //================================
-      // OCCUPANCY or ENTEREXIT mode
-      //================================     
     // Poll the remote serial interface for incoming data
     remote_serial_poll();
 
+    // Handle photo capture requested from the web UI
+    char snapPath[32];
+    if (remote_take_photo_pending(snapPath, sizeof(snapPath))) {
+      if (CameraSaveSnapToSD(snapPath)) {
+        remote_register_photo(snapPath);
+        log_print((String("Photo saved: ") + snapPath).c_str());
+      } else {
+        log_print("Photo save failed");
+      }
+    }
+
+    if ( GetTimerCurrent("UpdateAverageFrameSecs") >= GetTimerLimitSeconds("UpdateAverageFrameSecs") ) {
+      log_print(String("UpdateAverageFrameSecs timer elapsed: ") + GetTimerCurrent("UpdateAverageFrameSecs"));
+      AverageFrameCreate(10); // Average frames for 10 seconds to update average frame
+      RestartTimer("UpdateAverageFrameSecs");
+    }
+
     // Save copy of one frame to memory, then release it so camera can reuse the buffer (and we don't run out of memory)
     Frame prev_frame = CameraGetCopyOfLatestFrame();
-    delay(100);
+    // delay(100);
     Frame current_frame = CameraGetCopyOfLatestFrame();
 
     SplitFrame prev_frame_split = CameraGetSplitFrame(prev_frame);
     SplitFrame current_frame_split = CameraGetSplitFrame(current_frame);
 
-    if ( EnterExitDetector(prev_frame_split, current_frame_split) ) {
-      // SaveLastFrameJpeg(current_frame);  
-      // log_print("Prev:    " + String(prev_frame_split.leftBrightness)    + " | " + String(prev_frame_split.rightBrightness));
-      // log_print("Current: " + String(current_frame_split.leftBrightness) + " | " + String(current_frame_split.rightBrightness));
-    }
+    // EnterExitDetector(prev_frame_split, current_frame_split)
+    EnterExitDetector_v2_wAvg();
 
     free(prev_frame.copyOfbufferInMemory);
     free(current_frame.copyOfbufferInMemory);

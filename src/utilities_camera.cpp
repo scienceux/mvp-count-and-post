@@ -1,7 +1,6 @@
 /*
  * CameraSetup - pass target FPS, returns success/fail
  * CameraGetTargetFps - returns configured FPS
- * CameraSetFrameRotation - pass degrees (0/90/180/270), returns success/fail
  * CameraGetLatestFrame - captures and returns a grayscale frame
  * CameraRelease - pass frame to free its buffers
  * SaveLastFrameJpeg - pass frame, saves to /last_frame.jpg
@@ -20,6 +19,8 @@
 #include "img_converters.h"
 #include <SD.h>
 #include <stdlib.h>
+#include "utilities_debug.h"
+
 
 static File g_videoFile;
 static bool g_videoOpen = false;
@@ -45,8 +46,17 @@ static uint32_t g_segment = 0;
 #define PCLK_GPIO_NUM     13
 
 static int g_targetFps = 4;
-static int g_rotationDegrees = 0;
 char global_averageFrame_path[64] = {0};
+
+// PSRAM buffer holding the latest exponential average frame.
+// Flat array of FW*FH uint8_t values (307,200 bytes for VGA).
+// Each element is the averaged brightness (0=black, 255=white) of one pixel,
+// stored row by row: index 0 = top-left (x=0,y=0), index FW-1 = top-right (x=639,y=0),
+// If it's stored by row, why is it just [i] not [x][y]? Because it's a flat array, not a 2D array. 
+//    So index i goes from 0 to FW*FH-1, and corresponds to pixel (x=i%FW, y=i/FW).
+// index FW = start of row 2 (x=0,y=1), and so on.
+// Updated in place by AverageFrameCreate(); read via CameraGetAverageFrame().
+static uint8_t* g_avgFrame = nullptr;
 
 static bool g_recording = false;
 static unsigned long g_recordingStartMs = 0;
@@ -60,77 +70,6 @@ static char g_currentVidPath[32] = {0};
 static File g_vidFile;
 
 static const char* kLastFrameJpgPath = "/last_frame.jpg";
-
-
-static bool RotateGrayFrame(const camera_fb_t* src, int degrees, camera_fb_t** outFb, uint8_t** outBuf)
-{
-    if (!src || !outFb || !outBuf) return false;
-    if (src->format != PIXFORMAT_GRAYSCALE) return false;
-
-    int norm = degrees % 360;
-    if (norm < 0) norm += 360;
-    if (!(norm == 90 || norm == 180 || norm == 270)) return false;
-
-    const int w = (int)src->width;
-    const int h = (int)src->height;
-    const size_t pixelCount = (size_t)w * (size_t)h;
-
-    const int newW = (norm == 90 || norm == 270) ? h : w;
-    const int newH = (norm == 90 || norm == 270) ? w : h;
-
-    uint8_t* dst = (uint8_t*)malloc(pixelCount);
-    if (!dst) return false;
-
-    const uint8_t* srcBuf = src->buf;
-
-    if (norm == 90) {
-        for (int y = 0; y < h; ++y) {
-            for (int x = 0; x < w; ++x) {
-                const int srcIdx = y * w + x;
-                const int dstX = h - 1 - y;
-                const int dstY = x;
-                const int dstIdx = dstY * newW + dstX;
-                dst[dstIdx] = srcBuf[srcIdx];
-            }
-        }
-    } else if (norm == 180) {
-        for (int y = 0; y < h; ++y) {
-            for (int x = 0; x < w; ++x) {
-                const int srcIdx = y * w + x;
-                const int dstX = w - 1 - x;
-                const int dstY = h - 1 - y;
-                const int dstIdx = dstY * newW + dstX;
-                dst[dstIdx] = srcBuf[srcIdx];
-            }
-        }
-    } else { // 270
-        for (int y = 0; y < h; ++y) {
-            for (int x = 0; x < w; ++x) {
-                const int srcIdx = y * w + x;
-                const int dstX = y;
-                const int dstY = w - 1 - x;
-                const int dstIdx = dstY * newW + dstX;
-                dst[dstIdx] = srcBuf[srcIdx];
-            }
-        }
-    }
-
-    camera_fb_t* rotated = (camera_fb_t*)calloc(1, sizeof(camera_fb_t));
-    if (!rotated) {
-        free(dst);
-        return false;
-    }
-
-    rotated->buf = dst;
-    rotated->len = pixelCount;
-    rotated->width = newW;
-    rotated->height = newH;
-    rotated->format = src->format;
-
-    *outFb = rotated;
-    *outBuf = dst;
-    return true;
-}
 
 
 
@@ -208,17 +147,6 @@ int CameraGetTargetFps()
     return g_targetFps;
 }
 
-bool CameraSetFrameRotation(int degrees)
-{
-    int norm = degrees % 360;
-    if (norm < 0) norm += 360;
-    if (norm == 0 || norm == 90 || norm == 180 || norm == 270) {
-        g_rotationDegrees = norm;
-        return true;
-    }
-    return false;
-}
-
 Frame CameraGetCopyOfLatestFrame()
 {
     Frame out;
@@ -254,67 +182,101 @@ void CameraRelease(const Frame& frame)
     }
 }
 
-// bool SaveLastFrameJpeg(const Frame& frame)
-// {
-//     if (!frame.valid || !frame.copyOfbufferInMemory) return false;
-
-//     uint8_t* jpgBuf = nullptr;
-//     size_t   jpgLen = 0;
-
-//     // Convert grayscale buffer to JPEG in memory
-//     bool ok = fmt2jpg((uint8_t*)frame.copyOfbufferInMemory, frame.fb->len,
-//                       frame.fb->width, frame.fb->height,
-//                       PIXFORMAT_GRAYSCALE, 80,
-//                       &jpgBuf, &jpgLen);
-//     if (!ok || !jpgBuf) return false;
-
-//     // Write to SD card, overwriting any previous file
-//     File f = SD.open(kLastFrameJpgPath, FILE_WRITE);
-//     if (!f) { free(jpgBuf); return false; }
-//     f.write(jpgBuf, jpgLen);
-//     f.close();
-
-//     free(jpgBuf);
-//     return true;
-// }
-
-bool StartNewVideo(const char* folder)
+bool CameraSaveSnapToSD(const char* path)
 {
-    if (g_videoOpen) CloseOffVideo();
+    if (!path) return false;
 
-    if (!SD.exists(folder)) SD.mkdir(folder);
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) return false;
 
-    char path[96];
-    snprintf(path, sizeof(path),
-             "%s/segment_%06lu.mjpg",
-             folder,
-             (unsigned long)g_segment++);
+    uint8_t* jpgBuf = nullptr;
+    size_t   jpgLen = 0;
+    bool ok = fmt2jpg(fb->buf, fb->len, fb->width, fb->height,
+                      PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
+    esp_camera_fb_return(fb);
 
-    g_videoFile = SD.open(path, FILE_WRITE);
-    if (!g_videoFile) return false;
+    if (!ok || !jpgBuf) return false;
 
-    g_videoOpen = true;
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) { free(jpgBuf); return false; }
+    f.write(jpgBuf, jpgLen);
+    f.close();
+    free(jpgBuf);
     return true;
 }
 
-// After StartnewVideo, append raw MJPEG frames to it as they come in. VLC can open these directly. 
-void AddToVideo()
-{
-    if (!g_videoOpen) return;
 
-    camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) return;
 
-    g_videoFile.write(fb->buf, fb->len);
-
-    esp_camera_fb_return(fb);
+const uint8_t* CameraGetAverageFrame() {
+    return g_avgFrame;
 }
 
-void CloseOffVideo()
-{
-    if (!g_videoOpen) return;
+bool AverageFrameCreate(int numSecondsToAverage) {
+    turnOnLED();
 
-    g_videoFile.flush();
-    g_videoFile.close();
-    g_videoOpen = false;
+    const uint32_t numMillisToAverage = (uint32_t)numSecondsToAverage * 1000UL;
+    const uint32_t start = millis();
+
+    log_print(String("Averaging frames for ") + numSecondsToAverage + " seconds...");
+
+    // Check for average-frames folder on SD card, create if it doesn't exist
+    if (!SD.exists("/average-frames")) {
+        SD.mkdir("/average-frames");
+    }
+
+    const float alpha = 0.05f;
+    const size_t NPIX = (size_t)FW * (size_t)FH;
+
+    // Allocate the global PSRAM buffer once; reuse it on subsequent calls
+    if (!g_avgFrame) {
+        g_avgFrame = (uint8_t*)ps_malloc(NPIX);
+        if (!g_avgFrame) {
+            log_print("Failed to allocate PSRAM for average frame");
+            turnOffLED();
+            return false;
+        }
+        memset(g_avgFrame, 0, NPIX);
+    }
+
+    while ((millis() - start) < numMillisToAverage) {
+        camera_fb_t* fb = esp_camera_fb_get();
+        if (!fb) { turnOffLED(); return false; }
+
+        // IMPORTANT: assumes fb->format == PIXFORMAT_GRAYSCALE and fb->len == NPIX
+        for (size_t i = 0; i < NPIX; i++) {
+            const uint8_t cur = fb->buf[i];
+
+            //**********
+            // The Average Frame
+            // "New average = old average + fraction of (new value - old average)"
+            // Moves toward new value slowly, making it stable against sudden brightness changes
+            // Updates average frame in-place in PSRAM so we don't have to copy it around or use more memory
+            //**********
+            const float updated = (float)g_avgFrame[i] + alpha * ((float)cur - (float)g_avgFrame[i]);
+            g_avgFrame[i] = (uint8_t)(updated + 0.5f);
+        }
+
+        esp_camera_fb_return(fb);
+        delay(100);
+    }
+
+    turnOffLED();
+
+    // Save average frame to SD card for debugging/visualization
+    uint8_t* jpgBuf = nullptr;
+    size_t   jpgLen = 0;
+    bool ok = fmt2jpg(g_avgFrame, NPIX, FW, FH, PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
+    if (ok && jpgBuf) {
+        uint32_t timestamp = millis();
+        char filename[64];
+        snprintf(filename, sizeof(filename), "/average-frames/average_frame_%lu.jpg", timestamp);
+        File f = SD.open(filename, FILE_WRITE);
+        if (f) {
+            f.write(jpgBuf, jpgLen);
+            f.close();
+        }
+        free(jpgBuf);
+    }
+
+    return true;
 }
