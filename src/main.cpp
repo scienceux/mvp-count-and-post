@@ -12,6 +12,9 @@
 #include "img_converters.h"
 #include <SD.h>
 #include <Preferences.h>
+#include <WiFi.h>
+#include "data_save.h"
+
 
 // For Seeed XIAO ESP32-S3, the built-in LED is typically on pin 21
 // But LED_BUILTIN should work if defined correctly in the board files
@@ -102,7 +105,7 @@ void setup() {
     }
   }
 
-  bool wifiOk = setupClock(WIFI_SSID, WIFI_USER, WIFI_PASS);
+  bool wifiOk = wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS);
   if (wifiOk) {
     log_print("WiFi connected.");
     turn_on_remote_serial_monitoring();
@@ -111,11 +114,36 @@ void setup() {
     log_print("WiFi connection failed.");
   }
 
+  bool clockOk = setupClock(WIFI_SSID, WIFI_USER, WIFI_PASS);
+  if ( clockOk) {
+    log_print("Clock synced.");
+    TimeExact theTime = WhatTimeIsItExactly();
+    log_print(String("Current time: ") + theTime.hour + ":" + theTime.minute + ":" + theTime.second);
+
+  } else {
+    log_print("Clock sync failed.");
+  }
+
+  // Test LED
+  turnOnLED();
+  delay(2000);
+  turnOffLED();
+
+
   CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 60 seconds
   turnOnLED();
   AverageFrameCreate(10); // Average frames for first 10 seconds to create initial average frame
   turnOffLED();
 
+  CreateTimer("CheckWifi", 30.0f); // Check WiFi every 3000 seconds
+  CreateTimer("PrintStats", 60.0f); // Print stats every 60 seconds
+  CreateTimer("UploadData", 60.0f); // Upload data every 60 seconds
+
+  String CurrentTime = String(WhatTimeIsItExactly().hour) + ":" + String(WhatTimeIsItExactly().minute) + ":" + String(WhatTimeIsItExactly().second);
+  log_print(String("Setup complete at ") + CurrentTime);
+
+  NameTheCSVFile();
+  CreateCSVFile();
 }
 
 void loop() {
@@ -134,24 +162,25 @@ void loop() {
       }
     }
 
-    if ( GetTimerCurrent("UpdateAverageFrameSecs") >= GetTimerLimitSeconds("UpdateAverageFrameSecs") ) {
+    if ( IsTimerElapsed("UpdateAverageFrameSecs") ) {
       log_print(String("UpdateAverageFrameSecs timer elapsed: ") + GetTimerCurrent("UpdateAverageFrameSecs"));
       AverageFrameCreate(10); // Average frames for 10 seconds to update average frame
       RestartTimer("UpdateAverageFrameSecs");
     }
 
-    // Save copy of one frame to memory, then release it so camera can reuse the buffer (and we don't run out of memory)
-    Frame prev_frame = CameraGetCopyOfLatestFrame();
-    // delay(100);
-    Frame current_frame = CameraGetCopyOfLatestFrame();
-
-    SplitFrame prev_frame_split = CameraGetSplitFrame(prev_frame);
-    SplitFrame current_frame_split = CameraGetSplitFrame(current_frame);
-
-    // EnterExitDetector(prev_frame_split, current_frame_split)
     EnterExitDetector_v2_wAvg();
 
-    free(prev_frame.copyOfbufferInMemory);
-    free(current_frame.copyOfbufferInMemory);
 
+    // if ( IsTimerElapsed("PrintStats") ) {
+    //   log_print("Free heap: " + String(ESP.getFreeHeap()));
+    //   RestartTimer("PrintStats");
+    // }
+
+    if ( IsTimerElapsed("CheckWifi") ) {
+      if (WiFi.status() != WL_CONNECTED) {
+        log_print("WiFi disconnected, attempting reconnect...");
+        wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS);
+      }
+      RestartTimer("CheckWifi");
+    }
 }

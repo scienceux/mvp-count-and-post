@@ -18,6 +18,7 @@ bool CreateTimer(const char* name, float intervalSeconds);
 bool RestartTimer(const char* name);
 float GetTimerCurrent(const char* name);
 float GetTimerLimitSeconds(const char* name);
+bool IsTimerElapsed(const char* name);
 
 // Connect to Wi-Fi and sync the RTC using NTP.
 bool setupClock(const char* ssid, const char* user, const char* pass);

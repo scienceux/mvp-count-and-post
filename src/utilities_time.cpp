@@ -5,6 +5,7 @@
 #include <sys/time.h>
 #include "utilities_wifi.h"
 #include "utilities_debug.h"
+#include <WiFi.h>
 
 // Function quick reference:
 // setupClock(ssid, user, pass) -> bool success syncing RTC via NTP over Wi-Fi.
@@ -16,7 +17,8 @@
 // GetTimerCurrent(name) -> float elapsed seconds since timer start or -1.0f if missing.
 
 
-
+// These are internal functions visible to this .cpp only, not declared in the .h file, since we don't need them outside of this file.
+// That's what namespace down
 namespace
 {
     const int kMaxTimers = 8;
@@ -31,6 +33,7 @@ namespace
 
     NamedTimer g_timers[kMaxTimers];
 
+    // 
     int FindTimerIndex(const char* name)
     {
         if (!name || !name[0]) return -1;
@@ -53,10 +56,10 @@ namespace
 
 bool setupClock(const char* ssid, const char* user, const char* pass)
 {
-    if (!wifi_connect(ssid, user, pass)) {
-        log_print("Clock sync failed: WiFi connect");
+    if ( !WiFi.status() == WL_CONNECTED) {
+        log_print("Cannot sync clock: WiFi not connected");
         return false;
-    }
+    }    
 
     configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
 
@@ -159,3 +162,11 @@ float GetTimerCurrent(const char* name)
     return static_cast<float>(elapsedMs) / 1000.0f;
 }
 
+bool IsTimerElapsed(const char* name)
+{
+    int idx = FindTimerIndex(name);
+    if (idx < 0) return false;
+
+    uint32_t elapsedMs = millis() - g_timers[idx].startMs;
+    return elapsedMs >= SecondsToMs(g_timers[idx].intervalSeconds);
+}

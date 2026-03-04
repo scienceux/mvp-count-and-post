@@ -7,6 +7,7 @@
 #include <math.h>
 #include "img_converters.h"
 #include "utilities_debug.h"
+#include "data_save.h"
 
 // Put frame height and width here for easy access, based on camera config (VGA grayscale)
 const int FW = 640;
@@ -100,6 +101,17 @@ bool exitStarted = false;
 
 //================================
 // Simple Enter/Exit Detection Based on Left vs Right Brightness Changes
+// Call these first in main to create the SplitFrame
+    // Save copy of one frame to memory, then release it so camera can reuse the buffer (and we don't run out of memory)
+    // Frame prev_frame = CameraGetCopyOfLatestFrame();
+    // delay(100);
+    // Frame current_frame = CameraGetCopyOfLatestFrame();
+//    SplitFrame prev_frame_split = CameraGetSplitFrame(prev_frame);
+//    SplitFrame current_frame_split = CameraGetSplitFrame(current_frame);
+
+// then:
+    // free(prev_frame.copyOfbufferInMemory);
+    // free(current_frame.copyOfbufferInMemory);
 //================================
 bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_split) {
     uint32_t changeInBrightnessLeft  = abs(current_frame_split.leftBrightness  - prev_frame_split.leftBrightness);
@@ -149,12 +161,13 @@ bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_spl
 // v2 Enter/Exit Detection using quadrant grid + average frame diff
 //================================
 bool EnterExitDetector_v2_wAvg() {
+    // log_print("counting occupancy in frame...");
 
     const uint8_t  NUM_COLS                            = 4;
     const uint8_t  NUM_ROWS                            = 3;
     const uint8_t  howManyQuadrants                    = NUM_COLS * NUM_ROWS;  // 12
     const uint32_t howMuchDiffCountsAsASpike           = 200000;  // total abs diff per quadrant to count as a spike
-    const uint8_t  howManyQuadrantsSpikeCountsAsMotion = 1;       // need at least 1 spiking quadrant on a side to count
+    const uint8_t  howManyQuadrantsSpikeCountsAsMotion = 2;       // need at least 1 spiking quadrant on a side to count
 
     const uint16_t QUAD_W = FW / NUM_COLS;  // 160px wide per quadrant
     const uint16_t QUAD_H = FH / NUM_ROWS;  // 160px tall per quadrant
@@ -211,77 +224,90 @@ bool EnterExitDetector_v2_wAvg() {
     if (!enterStarted && !exitStarted) {
         if (spikingLeft >= howManyQuadrantsSpikeCountsAsMotion && spikingLeft > spikingRight) {
             enterStarted = true;
-            // log_print("Enter started");
+            log_print("Enter started");
+            return false;
         } else if (spikingRight >= howManyQuadrantsSpikeCountsAsMotion && spikingRight > spikingLeft) {
             exitStarted = true;
-            // log_print("Exit started");
+            log_print("Exit started");
+            return false;
         }
     }
 
     // Confirmed crossing: started on one side, now the other side spikes
     if (enterStarted && spikingRight >= howManyQuadrantsSpikeCountsAsMotion) {
         enterStarted = false;
-        log_print("Enter confirmed");
+
+        //**********
+        // ENTER!
+        //**********
+        log_print("Enter");
         extern int g_EntersCount;
         g_EntersCount++;
+        SaveEvent("ENTER");
+        
 
         
-        //===================================        
+        //_________________________   
         // FOR DEBUG: Save frame diff (not frame) as diffred frame to SD in /enters folder for later review and threshold tuning
         // Get diff frame (current frame - average frame)
-        uint8_t* diffFrame = (uint8_t*)malloc(FW * FH);
-        for (uint32_t i = 0; i < (FW * FH); i++) {
-            diffFrame[i] = (uint8_t)abs((int)pixels[i] - (int)avgFrame[i]);
-        }
-        // Save diff frame as JPEG to SD card
-        char path[64];
-        sprintf(path, "/enters/enter_diff_%lu.jpg", millis());
-        uint8_t* jpgBuf = nullptr;
-        size_t jpgLen = 0;
-        bool ok = fmt2jpg(diffFrame, (size_t)FW * FH, FW, FH, PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
-        if (ok && jpgBuf) {
-            File f = SD.open(path, FILE_WRITE);
-            if (f) {
-                f.write(jpgBuf, jpgLen);
-                f.close();
-            }
-            free(jpgBuf);
-        }
-        free(diffFrame);
-        //===================================
+        // uint8_t* diffFrame = (uint8_t*)malloc(FW * FH);
+        // for (uint32_t i = 0; i < (FW * FH); i++) {
+        //     diffFrame[i] = (uint8_t)abs((int)pixels[i] - (int)avgFrame[i]);
+        // }
+        // // Save diff frame as JPEG to SD card
+        // char path[64];
+        // sprintf(path, "/enters/enter_diff_%lu.jpg", millis());
+        // uint8_t* jpgBuf = nullptr;
+        // size_t jpgLen = 0;
+        // bool ok = fmt2jpg(diffFrame, (size_t)FW * FH, FW, FH, PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
+        // if (ok && jpgBuf) {
+        //     File f = SD.open(path, FILE_WRITE);
+        //     if (f) {
+        //         f.write(jpgBuf, jpgLen);
+        //         f.close();
+        //     }
+        //     free(jpgBuf);
+        // }
+        // free(diffFrame);
+        //_________________________   
 
 
 
         return true;
     } else if (exitStarted && spikingLeft >= howManyQuadrantsSpikeCountsAsMotion) {
+
+        //**********
+        // EXIT!
+        //**********
         exitStarted = false;
         log_print("Exit confirmed");
         extern int g_ExitsCount;
         g_ExitsCount++;
+        SaveEvent("EXIT");
         
 
         //===================================        
         // FOR DEBUG: Save frame diff (not frame) as diffred frame to SD in /exits folder for later review and threshold tuning
         // Get diff frame (current frame - average frame)
-        uint8_t* diffFrame = (uint8_t*)malloc(FW * FH);
-        for (uint32_t i = 0; i < (FW * FH); i++) {
-            diffFrame[i] = (uint8_t)abs((int)pixels[i] - (int)avgFrame[i]);
-        }
-        // Save diff frame as JPEG to SD card
-        char path[64];
-        sprintf(path, "/exits/exit_diff_%lu.jpg", millis());
-        uint8_t* jpgBuf = nullptr;
-        size_t jpgLen = 0;
-        bool ok = fmt2jpg(diffFrame, (size_t)FW * FH, FW, FH, PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
-        if (ok && jpgBuf) {
-            File f = SD.open(path, FILE_WRITE);
-            if (f) {
-                f.write(jpgBuf, jpgLen);
-                f.close();
-            }
-            free(jpgBuf);
-        }
-        free(diffFrame);
+        // uint8_t* diffFrame = (uint8_t*)malloc(FW * FH);
+        // for (uint32_t i = 0; i < (FW * FH); i++) {
+        //     diffFrame[i] = (uint8_t)abs((int)pixels[i] - (int)avgFrame[i]);
+        // }
+        // // Save diff frame as JPEG to SD card
+        // char path[64];
+        // sprintf(path, "/exits/exit_diff_%lu.jpg", millis());
+        // uint8_t* jpgBuf = nullptr;
+        // size_t jpgLen = 0;
+        // bool ok = fmt2jpg(diffFrame, (size_t)FW * FH, FW, FH, PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
+        // if (ok && jpgBuf) {
+        //     File f = SD.open(path, FILE_WRITE);
+        //     if (f) {
+        //         f.write(jpgBuf, jpgLen);
+        //         f.close();
+        //     }
+        //     free(jpgBuf);
+        // }
+        // free(diffFrame);
         //=================================== 
         
         return true;
@@ -291,7 +317,7 @@ bool EnterExitDetector_v2_wAvg() {
     if ((enterStarted || exitStarted) && spikingLeft < howManyQuadrantsSpikeCountsAsMotion && spikingRight < howManyQuadrantsSpikeCountsAsMotion) {
         enterStarted = false;
         exitStarted  = false;
-        // log_print("Reset - motion died");
+        log_print("Reset - motion died");
         return false;
     }
 
