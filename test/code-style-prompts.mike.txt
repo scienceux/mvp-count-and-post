@@ -1,0 +1,7 @@
+For crucial lines, add a comment beside the line with an example of how line would run with certain values, like:
+
+const uint8_t q   = row * NUM_COLS + col; // e.g., row 1 * NUM_COLS = 6 + col 2 = quadrant 8 (third quadrant in second row)
+
+The most crucial part in a crucial function should be labeled with stars like
+//*******
+// DIFF

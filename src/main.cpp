@@ -132,7 +132,7 @@ void setup() {
 
   CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 60 seconds
   turnOnLED();
-  AverageFrameCreate(10); // Average frames for first 10 seconds to create initial average frame
+  AverageFrameCreate(15); // Average frames for first 15 seconds to create initial average frame
   turnOffLED();
 
   CreateTimer("CheckWifi", 30.0f); // Check WiFi every 3000 seconds

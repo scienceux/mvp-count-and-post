@@ -158,61 +158,184 @@ bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_spl
 
 
 //================================
-// v2 Enter/Exit Detection using quadrant grid + average frame diff
+// DIVIDE & DIFF frame
+// return gridDiff struct - total diff per quadrant, minus average frame, minus average diff
 //================================
-bool EnterExitDetector_v2_wAvg() {
-    // log_print("counting occupancy in frame...");
+gridDiff DivideFrameIntoGridAndDiff() {
+    gridDiff out;
 
-    const uint8_t  NUM_COLS                            = 4;
-    const uint8_t  NUM_ROWS                            = 3;
-    const uint8_t  howManyQuadrants                    = NUM_COLS * NUM_ROWS;  // 12
-    const uint32_t howMuchDiffCountsAsASpike           = 200000;  // total abs diff per quadrant to count as a spike
-    const uint8_t  howManyQuadrantsSpikeCountsAsMotion = 2;       // need at least 1 spiking quadrant on a side to count
-
-    const uint16_t QUAD_W = FW / NUM_COLS;  // 160px wide per quadrant
-    const uint16_t QUAD_H = FH / NUM_ROWS;  // 160px tall per quadrant
-
-    uint32_t quadrantDiff[12] = { 0 };  // total abs diff vs average frame, per quadrant
+    const uint16_t QUAD_W = FW / GRID_DIFF_NUM_COLS;
+    const uint16_t QUAD_H = FH / GRID_DIFF_NUM_ROWS;
 
     // Use average frame as baseline
     const uint8_t* avgFrame = CameraGetAverageFrame();
     if (!avgFrame) {
         log_print("EnterExitDetector_v2: no average frame");
-        return false;
+        return out;
     }
 
     // Get current frame
     Frame current_frame = CameraGetCopyOfLatestFrame();
     if (!current_frame.valid) {
         log_print("EnterExitDetector_v2: no current frame");
-        return false;
+        return out;
     }
 
     const uint8_t* pixels = (uint8_t*)current_frame.copyOfbufferInMemory;
 
+    // PIXEL WALK
     // Walk every pixel, accumulate abs diff into its quadrant bucket
     for (uint32_t i = 0; i < (uint32_t)(FW * FH); i++) {
-        const uint16_t x   = i % FW;
+
+        // Get X/Y pos
+        const uint16_t x   = i % FW; // 0 to FW-1 (e.g., x=2 in second row would be i=642, 642 % 640 = 2)
         const uint16_t y   = i / FW;
 
-        const uint8_t col = x / QUAD_W;
-        const uint8_t row = y / QUAD_H;
-        const uint8_t q   = row * NUM_COLS + col;
+        // QUADRANTS       
+        // Which quadrant is this pixel in?
+        // QUAD_W=160, so x=2 would be col=0 (first quadrant), x=162 would be col= (second quadrant)
+        // min is to handle edge case of x=639 which would give col=3 (nonexistent) but should be col=2 (last quadrant)
+        const uint8_t col = min((uint8_t)(x / QUAD_W), (uint8_t)(GRID_DIFF_NUM_COLS - 1)); 
+        const uint8_t row = min((uint8_t)(y / QUAD_H), (uint8_t)(GRID_DIFF_NUM_ROWS - 1)); // QUAD_H=96, so y=50 would be row=0 (first row of quadrants), y=150 would be row=1 (second row of quadrants)
+        
+        // Which quadrant number (0 to 19 for 6x5 grid) is this pixel in?
+        const uint8_t q   = row * GRID_DIFF_NUM_COLS + col; // e.g., row 1 * NUM_COLS = 6 + col 2 = quadrant 8 (third quadrant in second row)
 
-        const uint32_t diff = (uint32_t)abs((int)pixels[i] - (int)avgFrame[i]);
-        quadrantDiff[q] += diff;
+        //*******
+        // DIFF
+        const uint32_t pixeldiff = (uint32_t)abs((int)pixels[i] - (int)avgFrame[i]); // e.g., if pixels[i]=140 and avgFrame[i]=100, abs(140 - 100) = 40, so pixeldiff = 40
+        out.quadrantDiff[q] += pixeldiff;
     }
 
+    //------------------------
+    // Extra DIFF
+    // Get average quadrant diff across all quadrants, then subtract it from each quadrant.
+    // This helps suppress scene-wide changes (for example, overall brightness shifting everywhere at once).
+    uint64_t totalQuadrantDiff = 0;
+    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+        totalQuadrantDiff += out.quadrantDiff[q];
+    }
+
+    out.averageQuadrantDiff = (uint32_t)(totalQuadrantDiff / GRID_DIFF_NUM_QUADRANTS);
+
+    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+        if (out.quadrantDiff[q] > out.averageQuadrantDiff) {
+            out.quadrantDiff[q] -= out.averageQuadrantDiff;
+        } else {
+            out.quadrantDiff[q] = 0;
+        }
+    }
+    //------------------------
+
+
     free(current_frame.copyOfbufferInMemory);
+
+    out.valid = true;
+
+    return out;
+}
+
+
+//================================
+// DEBUG ONLY
+// Build a blocky grayscale image from the processed grid diff so the debug page
+// background uses the same data as DivideFrameIntoGridAndDiff().
+//================================
+bool BuildGridDiffDebugImageJpg(uint8_t** jpgBufOut, size_t* jpgLenOut) {
+    if (!jpgBufOut || !jpgLenOut) {
+        log_print("BuildGridDiffDebugImageJpg: null output pointer");
+        return false;
+    }
+
+    *jpgBufOut = nullptr;
+    *jpgLenOut = 0;
+
+    gridDiff diff = DivideFrameIntoGridAndDiff();
+    if (!diff.valid) {
+        log_print("BuildGridDiffDebugImageJpg: invalid grid diff");
+        return false;
+    }
+
+    uint8_t* debugFrame = (uint8_t*)malloc((size_t)FW * FH);
+    if (!debugFrame) {
+        log_print("BuildGridDiffDebugImageJpg: malloc failed");
+        return false;
+    }
+
+    const uint16_t QUAD_W = FW / GRID_DIFF_NUM_COLS;
+    const uint16_t QUAD_H = FH / GRID_DIFF_NUM_ROWS;
+
+    uint32_t maxQuadrantDiff = 0;
+    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+        if (diff.quadrantDiff[q] > maxQuadrantDiff) {
+            maxQuadrantDiff = diff.quadrantDiff[q];
+        }
+    }
+
+    for (uint32_t i = 0; i < (uint32_t)(FW * FH); i++) {
+        const uint16_t x = i % FW;
+        const uint16_t y = i / FW;
+
+        const uint8_t col = min((uint8_t)(x / QUAD_W), (uint8_t)(GRID_DIFF_NUM_COLS - 1));
+        const uint8_t row = min((uint8_t)(y / QUAD_H), (uint8_t)(GRID_DIFF_NUM_ROWS - 1));
+        const uint8_t q   = row * GRID_DIFF_NUM_COLS + col;
+
+        if (maxQuadrantDiff == 0) {
+            debugFrame[i] = 0;
+        } else {
+            debugFrame[i] = (uint8_t)((diff.quadrantDiff[q] * 255ULL) / maxQuadrantDiff);
+        }
+    }
+
+    bool ok = fmt2jpg(
+        debugFrame,
+        (size_t)FW * FH,
+        FW,
+        FH,
+        PIXFORMAT_GRAYSCALE,
+        80,
+        jpgBufOut,
+        jpgLenOut
+    );
+
+    free(debugFrame);
+
+    if (!ok) {
+        if (*jpgBufOut) {
+            free(*jpgBufOut);
+            *jpgBufOut = nullptr;
+        }
+        *jpgLenOut = 0;
+        log_print("BuildGridDiffDebugImageJpg: fmt2jpg failed");
+        return false;
+    }
+
+    return true;
+}
+
+
+//================================
+// v2 Enter/Exit Detection using quadrant grid + average frame diff
+//================================
+bool EnterExitDetector_v2_wAvg() {
+    // log_print("counting occupancy in frame...");
+
+    const uint32_t howMuchDiffCountsAsASpike           = 200000;  // total abs diff per quadrant to count as a spike
+    const uint8_t  howManyQuadrantsSpikeCountsAsMotion = 2;       // need at least 2 spiking quadrants on a side to count
+
+    gridDiff currentDiff = DivideFrameIntoGridAndDiff();
+    if (!currentDiff.valid) {
+        return false;
+    }
 
     // Count how many quadrants spiked on each side
     uint8_t spikingLeft  = 0;
     uint8_t spikingRight = 0;
 
-    for (uint8_t q = 0; q < howManyQuadrants; q++) {
-        if (quadrantDiff[q] > howMuchDiffCountsAsASpike) {
-            const uint8_t col = q % NUM_COLS;
-            if (col < NUM_COLS / 2) spikingLeft++;
+    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+        if (currentDiff.quadrantDiff[q] > howMuchDiffCountsAsASpike) {
+            const uint8_t col = q % GRID_DIFF_NUM_COLS;
+            if (col < GRID_DIFF_NUM_COLS / 2) spikingLeft++;
             else                    spikingRight++;
         }
     }
@@ -239,7 +362,7 @@ bool EnterExitDetector_v2_wAvg() {
 
         //**********
         // ENTER!
-        //**********
+        //**********wa
         log_print("Enter");
         extern int g_EntersCount;
         g_EntersCount++;
@@ -254,9 +377,9 @@ bool EnterExitDetector_v2_wAvg() {
         // for (uint32_t i = 0; i < (FW * FH); i++) {
         //     diffFrame[i] = (uint8_t)abs((int)pixels[i] - (int)avgFrame[i]);
         // }
-        // // Save diff frame as JPEG to SD card
+        // Save diff frame as JPEG to SD card
         // char path[64];
-        // sprintf(path, "/enters/enter_diff_%lu.jpg", millis());
+        // sprintf(path, "/enters/last_enter.jpg", millis());
         // uint8_t* jpgBuf = nullptr;
         // size_t jpgLen = 0;
         // bool ok = fmt2jpg(diffFrame, (size_t)FW * FH, FW, FH, PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
@@ -317,7 +440,7 @@ bool EnterExitDetector_v2_wAvg() {
     if ((enterStarted || exitStarted) && spikingLeft < howManyQuadrantsSpikeCountsAsMotion && spikingRight < howManyQuadrantsSpikeCountsAsMotion) {
         enterStarted = false;
         exitStarted  = false;
-        log_print("Reset - motion died");
+        log_print("Reset");
         return false;
     }
 

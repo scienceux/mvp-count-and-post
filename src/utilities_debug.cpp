@@ -4,6 +4,8 @@
 #include <WebServer.h>
 #include <string.h>
 #include <SD.h>
+#include "utilities_camera.h"
+#include "count_occupancy_in_frame.h"
 
 extern int g_EntersCount;
 extern int g_ExitsCount;
@@ -140,13 +142,250 @@ namespace
     f.close();
   }
 
+  // Stream raw grayscale bytes of the current live frame (FW*FH = 307200 bytes)
+  void get_raw_frame_pixels()
+  {
+    Frame f = CameraGetCopyOfLatestFrame();
+    if (!f.valid || !f.copyOfbufferInMemory) {
+      g_httpServer.send(503, "text/plain", "no frame available");
+      return;
+    }
+    const size_t len = (size_t)FW * FH;
+    g_httpServer.setContentLength(len);
+    g_httpServer.send(200, "application/octet-stream", "");
+    WiFiClient client = g_httpServer.client();
+    const uint8_t* p = (const uint8_t*)f.copyOfbufferInMemory;
+    size_t remaining = len;
+    const size_t kChunk = 4096;
+    while (remaining > 0) {
+      const size_t n = remaining < kChunk ? remaining : kChunk;
+      client.write(p, n);
+      p         += n;
+      remaining -= n;
+    }
+    free(f.copyOfbufferInMemory);
+  }
+
+  // Stream raw grayscale bytes of the PSRAM average frame (no free — it's the master copy)
+  void get_average_frame_pixels()
+  {
+    const uint8_t* avg = CameraGetAverageFrame();
+    if (!avg) {
+      g_httpServer.send(503, "text/plain", "no average frame");
+      return;
+    }
+    const size_t len = (size_t)FW * FH;
+    g_httpServer.setContentLength(len);
+    g_httpServer.send(200, "application/octet-stream", "");
+    WiFiClient client = g_httpServer.client();
+    const uint8_t* p = avg;
+    size_t remaining = len;
+    const size_t kChunk = 4096;
+    while (remaining > 0) {
+      const size_t n = remaining < kChunk ? remaining : kChunk;
+      client.write(p, n);
+      p         += n;
+      remaining -= n;
+    }
+  }
+
+  // Trigger a full average frame recompute. Blocks for numSeconds while sampling.
+  void handle_recompute_avg()
+  {
+    String secStr = g_httpServer.arg("seconds");
+    int seconds = secStr.length() > 0 ? secStr.toInt() : 10;
+    if (seconds < 1)  seconds = 1;
+    if (seconds > 60) seconds = 60;
+    AverageFrameCreate(seconds);
+    g_httpServer.send(200, "text/plain", "ok");
+  }
+
+  void handle_avg_frame_sd()
+  {
+    const char* path = "/average-frames/last_average_frame.jpg";
+    if (!SD.exists(path)) { g_httpServer.send(404, "text/plain", "not found"); return; }
+    File f = SD.open(path, FILE_READ);
+    if (!f) { g_httpServer.send(500, "text/plain", "open failed"); return; }
+    g_httpServer.streamFile(f, "image/jpeg");
+    f.close();
+  }
+
+  void handle_grid_diff()
+  {
+    gridDiff currentDiff = DivideFrameIntoGridAndDiff();
+
+    String json;
+    json.reserve(512);
+    json += "{";
+    json += "\"valid\":";
+    json += currentDiff.valid ? "true" : "false";
+    json += ",\"cols\":";
+    json += String(GRID_DIFF_NUM_COLS);
+    json += ",\"rows\":";
+    json += String(GRID_DIFF_NUM_ROWS);
+    json += ",\"averageQuadrantDiff\":";
+    json += String(currentDiff.averageQuadrantDiff);
+    json += ",\"quadrantDiff\":[";
+
+    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+      if (q > 0) {
+        json += ",";
+      }
+      json += String(currentDiff.quadrantDiff[q]);
+    }
+
+    json += "]}";
+    g_httpServer.send(200, "application/json", json);
+  }
+
+  void handle_grid_diff_image()
+  {
+    uint8_t* jpgBuf = nullptr;
+    size_t jpgLen = 0;
+
+    if (!BuildGridDiffDebugImageJpg(&jpgBuf, &jpgLen) || !jpgBuf || jpgLen == 0) {
+      g_httpServer.send(500, "text/plain", "failed to build grid diff image");
+      return;
+    }
+
+    g_httpServer.setContentLength(jpgLen);
+    g_httpServer.send(200, "image/jpeg", "");
+    g_httpServer.client().write(jpgBuf, jpgLen);
+
+    free(jpgBuf);
+  }
+
+  void serve_configure_threshold_page()
+  {
+    static const char kPage[] = R"HTML(
+<!doctype html><html><head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Configure Threshold</title>
+<style>
+body{font-family:monospace;padding:12px;background:#0b0b0b;color:#e7e7e7;}
+canvas{display:block;max-width:100%;border:1px solid #333;margin:6px 0;}
+button{padding:8px 18px;font-size:1em;cursor:pointer;background:#1a6aff;color:#fff;
+  border:none;border-radius:4px;font-family:monospace;margin:6px 0;}
+a{color:#1a6aff;}
+.row{display:flex;align-items:center;gap:12px;margin:10px 0;flex-wrap:wrap;}
+.section-label{font-weight:bold;margin-top:18px;margin-bottom:2px;color:#ccc;}
+.key{display:flex;gap:18px;align-items:center;margin:8px 0;flex-wrap:wrap;}
+.key-item{display:flex;align-items:center;gap:7px;}
+.swatch{width:22px;height:22px;border-radius:3px;flex-shrink:0;}
+</style>
+</head><body>
+<div><a href='/'>&#8592; Back</a></div>
+<h2>Configure Threshold</h2>
+
+<div style='display:flex;gap:10px;flex-wrap:wrap;align-items:center;'>
+<button id='captureBtn'>Capture Frame</button>
+<button id='avgBtn' style='background:#7a4a00;'>Recompute Average (10s)</button>
+</div>
+<div id='status' style='color:#aaa;margin:6px 0;'>Press Capture to load a frame.</div>
+
+<div class='section-label'>Diff vs Average Frame</div>
+<canvas id='cv' width='640' height='480'></canvas>
+
+<div class='row'>
+  <label>Spike threshold (per-quadrant diff sum):</label>
+  <input type='range' id='sl' min='0' max='500000' step='1000' value='200000' style='flex:1;min-width:160px;'>
+  <span id='sv' style='min-width:64px;text-align:right;'>200000</span>
+</div>
+
+<div class='key'>
+  <div class='key-item'>
+    <div class='swatch' style='background:rgba(255,60,60,0.6);border:2px solid #ff4444;'></div>
+    <span>Quadrant diff sum &gt; threshold &mdash; <strong>spiking</strong></span>
+  </div>
+  <div class='key-item'>
+    <div class='swatch' style='background:transparent;border:2px solid #44aaff;'></div>
+    <span>Quadrant diff sum &le; threshold &mdash; <strong>quiet</strong></span>
+  </div>
+  <div class='key-item' style='color:#aaa;font-size:0.9em;'>Numbers = processed diff sum per quadrant</div>
+</div>
+
+<div style='color:#aaa;font-size:0.9em;margin:8px 0 2px;'>Grid matches detector layout: 6 columns × 5 rows = 30 quadrants.</div>
+
+<div class='section-label'>Average Frame (baseline)</div>
+<img id='avgimg' style='max-width:100%;display:block;border:1px solid #333;margin:6px 0;'>
+
+<script>
+const FW=640,FH=480;
+let NC=6,NR=5,QW=FW/NC,QH=FH/NR;
+let qd=null;
+const cv=document.getElementById('cv');
+const ctx=cv.getContext('2d');
+const sl=document.getElementById('sl');
+document.getElementById('avgimg').src='/avg_frame_sd?t='+Date.now();
+const sv=document.getElementById('sv');
+const st=document.getElementById('status');
+const diffImg=new Image();
+diffImg.onload=()=>{ if(qd) draw(); };
+function updateGridSize(cols,rows){
+  NC=cols;
+  NR=rows;
+  QW=FW/NC;
+  QH=FH/NR;
+}
+document.getElementById('avgBtn').addEventListener('click',async()=>{
+  st.textContent='Recomputing average frame (10s)... please wait.';
+  document.getElementById('avgBtn').disabled=true;
+  try{
+    const r=await fetch('/recompute_avg?seconds=10');
+    st.textContent=r.ok?'Done. Press Capture to see updated diff.':'Recompute failed: '+r.status;
+    if(r.ok) document.getElementById('avgimg').src='/avg_frame_sd?t='+Date.now();
+  }catch(e){st.textContent='Recompute error: '+e.message;}
+  document.getElementById('avgBtn').disabled=false;
+});
+document.getElementById('captureBtn').addEventListener('click',async()=>{
+  st.textContent='Fetching frames...';
+  try{
+    const t=Date.now();
+    const[gr]=await Promise.all([
+      fetch('/grid_diff?t='+t)
+    ]);
+    if(!gr.ok) throw new Error('HTTP '+gr.status);
+    const gd=await gr.json();
+    if(!gd.valid) throw new Error('grid diff not available');
+    updateGridSize(gd.cols,gd.rows);
+    qd=gd.quadrantDiff;
+    diffImg.src='/grid_diff_image.jpg?t='+t;
+    st.textContent='Captured \u2014 drag slider to adjust threshold. Avg diff removed: '+gd.averageQuadrantDiff;
+  }catch(e){st.textContent='Error: '+e.message;}
+});
+sl.addEventListener('input',()=>{sv.textContent=sl.value;if(qd)draw();});
+function draw(){
+  const thr=+sl.value;
+  ctx.clearRect(0,0,FW,FH);
+  ctx.drawImage(diffImg,0,0,FW,FH);
+  // Overlay quadrant grid
+  for(let q=0;q<NC*NR;q++){
+    const col=q%NC,row=q/NC|0;
+    const x=col*QW,y=row*QH;
+    const spike=qd[q]>thr;
+    ctx.strokeStyle=spike?'#ff4444':'#44aaff';
+    ctx.lineWidth=2;
+    ctx.strokeRect(x+1,y+1,QW-2,QH-2);
+    ctx.textAlign='center';
+    ctx.fillStyle=spike?'#ffcccc':'#aaddff';
+    ctx.font='bold 13px monospace';
+    ctx.fillText(qd[q].toLocaleString(),x+QW/2,y+QH/2+5);
+  }
+}
+</script>
+</body></html>
+)HTML";
+    g_httpServer.send(200, "text/html", kPage);
+  }
+
   void handle_root()
   {
     String html;
     html.reserve(4096);
     html += "<!doctype html><html><head><meta charset='utf-8'>";
     html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-    html += "<meta http-equiv='refresh' content='2'>";
+    // html += "<meta http-equiv='refresh' content='2'>";  // uncomment to auto-refresh every 2 seconds
     html += "<title>Remote Log</title>";
     html += "<style>body{font-family:monospace;padding:12px;background:#0b0b0b;color:#e7e7e7;}";
     html += ".log-box{height:480px;overflow-y:auto;background:#111;padding:8px 10px;border:1px solid #333;}";
@@ -174,6 +413,11 @@ namespace
     html += "<button type='submit' style='padding:8px 18px;font-size:1em;cursor:pointer;";
     html += "background:#1a6aff;color:#fff;border:none;border-radius:4px;font-family:monospace;'>";
     html += "Take Photo</button></form>";
+
+    // Configure Threshold button
+    html += "<div style='margin:8px 0;'><a href='/configure' style='padding:8px 18px;font-size:1em;";
+    html += "background:#2a7a2a;color:#fff;border-radius:4px;text-decoration:none;display:inline-block;";
+    html += "font-family:monospace;'>Configure Threshold</a></div>";
 
     // Photo gallery
     if (g_photoCount > 0) {
@@ -237,6 +481,13 @@ void turn_on_remote_serial_monitoring()
   g_httpServer.on("/image", handle_image);
   g_httpServer.on("/photo", handle_photo);
   g_httpServer.on("/take_photo", HTTP_POST, handle_take_photo);
+  g_httpServer.on("/configure", serve_configure_threshold_page);
+  g_httpServer.on("/avg_frame_sd", handle_avg_frame_sd);
+  g_httpServer.on("/recompute_avg", handle_recompute_avg);
+  g_httpServer.on("/grid_diff", handle_grid_diff);
+  g_httpServer.on("/grid_diff_image.jpg", handle_grid_diff_image);
+  g_httpServer.on("/raw_frame", get_raw_frame_pixels);
+  g_httpServer.on("/avg_frame_raw", get_average_frame_pixels);
   g_httpServer.begin();
   g_serverStarted = true;
 

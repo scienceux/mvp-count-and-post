@@ -211,6 +211,10 @@ const uint8_t* CameraGetAverageFrame() {
     return g_avgFrame;
 }
 
+
+// Capture and exponentially average frames for numSecondsToAverage seconds,
+// then save the result as a JPEG to /average-frames/ on the SD card.
+// Update g_avgFrame in-place in PSRAM, which we can read later via CameraGetAverageFrame() for motion detection.
 bool AverageFrameCreate(int numSecondsToAverage) {
     turnOnLED();
 
@@ -269,7 +273,7 @@ bool AverageFrameCreate(int numSecondsToAverage) {
     if (ok && jpgBuf) {
         uint32_t timestamp = millis();
         char filename[64];
-        snprintf(filename, sizeof(filename), "/average-frames/average_frame_%lu.jpg", timestamp);
+        snprintf(filename, sizeof(filename), "/average-frames/last_average_frame.jpg", timestamp);
         File f = SD.open(filename, FILE_WRITE);
         if (f) {
             f.write(jpgBuf, jpgLen);

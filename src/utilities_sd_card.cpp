@@ -12,9 +12,19 @@ bool setupSDCard() {
     // Initialize SPI with custom pins
     SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
     
-    // Initialize SD card
-    if (!SD.begin(SD_CS_PIN)) {
-        Serial.println("SD card setup failed!");
+    // Initialize SD card — retry up to 5 times with a reset between attempts.
+    // After a flash/reset the SPI bus can be left dirty, causing the first begin() to fail
+    // even when the card is physically fine.
+    bool sdOk = false;
+    for (int attempt = 1; attempt <= 5; attempt++) {
+        if (SD.begin(SD_CS_PIN)) { sdOk = true; break; }
+        Serial.printf("SD card setup failed (attempt %d/5), retrying...\n", attempt);
+        SD.end();
+        delay(200);
+        SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+    }
+    if (!sdOk) {
+        Serial.println("SD card setup failed after 5 attempts!");
         return false;
     }
     
