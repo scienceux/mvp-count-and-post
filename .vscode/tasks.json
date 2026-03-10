@@ -1,0 +1,63 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Upload to Both Devices",
+            "type": "shell",
+            "command": "C:\\Users\\User\\.platformio\\penv\\Scripts\\platformio.exe",
+            "args": [
+                "run",
+                "--target", "upload",
+                "--environment", "device1_com7",
+                "--environment", "device2_com6"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Upload to Device 1 (COM7)",
+            "type": "shell",
+            "command": "C:\\Users\\User\\.platformio\\penv\\Scripts\\platformio.exe", 
+            "args": [
+                "run",
+                "--target", "upload",
+                "--environment", "device1_com7"
+            ],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Upload to Device 2 (COM6)",
+            "type": "shell",
+            "command": "C:\\Users\\User\\.platformio\\penv\\Scripts\\platformio.exe",
+            "args": [
+                "run", 
+                "--target", "upload",
+                "--environment", "device2_com6"
+            ],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

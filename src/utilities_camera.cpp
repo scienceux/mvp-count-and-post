@@ -138,6 +138,10 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
 
     sensor->set_bpc(sensor, 0);              // disable bad pixel correction
     sensor->set_wpc(sensor, 0);              // disable white pixel correction    
+    
+    // Fix mirrored image by disabling horizontal mirroring
+    sensor->set_hmirror(sensor, 1);          // disable horizontal mirroring (0 = no mirror, 1 = mirror)
+    sensor->set_vflip(sensor, 0);            // disable vertical flipping (0 = no flip, 1 = flip)
 
     return true;
 }
