@@ -1,0 +1,6 @@
+# ESP-IDF sdkconfig overrides for this project.
+# PlatformIO merges this into the sdkconfig at build time.
+
+# Camera driver task stack — default (2048) is too small when the frame
+# queue fills up during long blocking operations like AverageFrameCreate / CalibrateNoise.
+CONFIG_ESP_CAMERA_TASK_STACK_SIZE=8192

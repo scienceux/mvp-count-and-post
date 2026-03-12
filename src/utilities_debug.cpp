@@ -197,6 +197,7 @@ namespace
     if (seconds < 1)  seconds = 1;
     if (seconds > 60) seconds = 60;
     AverageFrameCreate(seconds);
+    CalibrateNoise(10);  // characterise noise floor with 10s of empty-room frames
     g_httpServer.send(200, "text/plain", "ok");
   }
 
@@ -234,7 +235,14 @@ namespace
       json += String(currentDiff.quadrantDiff[q]);
     }
 
-    json += "]}";
+    json += "],\"noiseZ\":[";
+    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+        if (q > 0) json += ",";
+        json += String(currentDiff.noiseZ[q], 2);
+    }
+    json += "],\"noiseCalibrated\":";
+    json += IsNoiseCalibrated() ? "true" : "false";
+    json += "}";
     g_httpServer.send(200, "application/json", json);
   }
 
@@ -245,6 +253,23 @@ namespace
 
     if (!BuildGridDiffDebugImageJpg(&jpgBuf, &jpgLen) || !jpgBuf || jpgLen == 0) {
       g_httpServer.send(500, "text/plain", "failed to build grid diff image");
+      return;
+    }
+
+    g_httpServer.setContentLength(jpgLen);
+    g_httpServer.send(200, "image/jpeg", "");
+    g_httpServer.client().write(jpgBuf, jpgLen);
+
+    free(jpgBuf);
+  }
+
+  void handle_pixel_diff_image()
+  {
+    uint8_t* jpgBuf = nullptr;
+    size_t jpgLen = 0;
+
+    if (!BuildPixelDiffDebugImageJpg(&jpgBuf, &jpgLen) || !jpgBuf || jpgLen == 0) {
+      g_httpServer.send(500, "text/plain", "failed to build pixel diff image");
       return;
     }
 
@@ -288,9 +313,9 @@ a{color:#1a6aff;}
 <canvas id='cv' width='640' height='480'></canvas>
 
 <div class='row'>
-  <label>Spike threshold (per-quadrant diff sum):</label>
-  <input type='range' id='sl' min='0' max='500000' step='1000' value='200000' style='flex:1;min-width:160px;'>
-  <span id='sv' style='min-width:64px;text-align:right;'>200000</span>
+  <label>Spike threshold (Z-score, or raw diff if not calibrated):</label>
+  <input type='range' id='sl' min='0' max='10' step='0.1' value='2' style='flex:1;min-width:160px;'>
+  <span id='sv' style='min-width:64px;text-align:right;'>2.0</span>
 </div>
 
 <div class='key'>
@@ -307,15 +332,20 @@ a{color:#1a6aff;}
 
 <div style='color:#aaa;font-size:0.9em;margin:8px 0 2px;'>Grid matches detector layout: 6 columns × 5 rows = 30 quadrants.</div>
 
+<div class='section-label'>Quadrant Diff Brightness</div>
+<canvas id='cv2' width='640' height='480'></canvas>
+
 <div class='section-label'>Average Frame (baseline)</div>
 <img id='avgimg' style='max-width:100%;display:block;border:1px solid #333;margin:6px 0;'>
 
 <script>
 const FW=640,FH=480;
 let NC=6,NR=5,QW=FW/NC,QH=FH/NR;
-let qd=null;
+let qd=null, nz=null, noiseCalibrated=false;
 const cv=document.getElementById('cv');
 const ctx=cv.getContext('2d');
+const cv2=document.getElementById('cv2');
+const ctx2=cv2.getContext('2d');
 const sl=document.getElementById('sl');
 document.getElementById('avgimg').src='/avg_frame_sd?t='+Date.now();
 const sv=document.getElementById('sv');
@@ -350,27 +380,53 @@ document.getElementById('captureBtn').addEventListener('click',async()=>{
     if(!gd.valid) throw new Error('grid diff not available');
     updateGridSize(gd.cols,gd.rows);
     qd=gd.quadrantDiff;
-    diffImg.src='/grid_diff_image.jpg?t='+t;
-    st.textContent='Captured \u2014 drag slider to adjust threshold. Avg diff removed: '+gd.averageQuadrantDiff;
+    nz=gd.noiseZ||null;
+    noiseCalibrated=gd.noiseCalibrated||false;
+    diffImg.src='/pixel_diff_image.jpg?t='+t;
+    st.textContent='Captured — ' + (noiseCalibrated ? 'Z-score mode' : 'raw diff mode (run Recompute to calibrate)');
   }catch(e){st.textContent='Error: '+e.message;}
 });
-sl.addEventListener('input',()=>{sv.textContent=sl.value;if(qd)draw();});
+sl.addEventListener('input',()=>{sv.textContent=parseFloat(sl.value).toFixed(1);if(qd)draw();});
 function draw(){
   const thr=+sl.value;
+  const useZ=noiseCalibrated&&nz;
+
+  // Canvas 1: pixel diff image + quadrant grid overlay
   ctx.clearRect(0,0,FW,FH);
   ctx.drawImage(diffImg,0,0,FW,FH);
-  // Overlay quadrant grid
   for(let q=0;q<NC*NR;q++){
     const col=q%NC,row=q/NC|0;
     const x=col*QW,y=row*QH;
-    const spike=qd[q]>thr;
+    const spike=useZ ? (nz[q]>thr) : (qd[q]>thr);
+    const label=useZ ? nz[q].toFixed(1)+'σ' : qd[q].toLocaleString();
     ctx.strokeStyle=spike?'#ff4444':'#44aaff';
     ctx.lineWidth=2;
     ctx.strokeRect(x+1,y+1,QW-2,QH-2);
     ctx.textAlign='center';
     ctx.fillStyle=spike?'#ffcccc':'#aaddff';
     ctx.font='bold 13px monospace';
-    ctx.fillText(qd[q].toLocaleString(),x+QW/2,y+QH/2+5);
+    ctx.fillText(label,x+QW/2,y+QH/2+5);
+  }
+
+  // Canvas 2: black-to-white blocks — brightness scaled to max Z (or raw diff if not calibrated)
+  const vals=useZ ? nz : qd;
+  const maxVal=Math.max(...vals,1);
+  ctx2.clearRect(0,0,FW,FH);
+  for(let q=0;q<NC*NR;q++){
+    const col=q%NC,row=q/NC|0;
+    const x=col*QW,y=row*QH;
+    const brightness=Math.round((vals[q]/maxVal)*255);
+    ctx2.fillStyle='rgb('+brightness+','+brightness+','+brightness+')';
+    ctx2.fillRect(x,y,QW,QH);
+    const spike=useZ ? (nz[q]>thr) : (qd[q]>thr);
+    const label=useZ ? vals[q].toFixed(1)+'σ' : vals[q].toLocaleString();
+    ctx2.strokeStyle=spike?'#ff4444':'#444';
+    ctx2.lineWidth=2;
+    ctx2.strokeRect(x+1,y+1,QW-2,QH-2);
+    ctx2.textAlign='center';
+    ctx2.fillStyle=brightness>128?'#000':'#fff';
+    ctx2.font='bold 13px monospace';
+    ctx2.fillText(label,x+QW/2,y+QH/2+5);
   }
 }
 </script>
@@ -486,6 +542,7 @@ void turn_on_remote_serial_monitoring()
   g_httpServer.on("/recompute_avg", handle_recompute_avg);
   g_httpServer.on("/grid_diff", handle_grid_diff);
   g_httpServer.on("/grid_diff_image.jpg", handle_grid_diff_image);
+  g_httpServer.on("/pixel_diff_image.jpg", handle_pixel_diff_image);
   g_httpServer.on("/raw_frame", get_raw_frame_pixels);
   g_httpServer.on("/avg_frame_raw", get_average_frame_pixels);
   g_httpServer.begin();

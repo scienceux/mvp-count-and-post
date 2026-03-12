@@ -13,7 +13,7 @@ extern char global_averageFrame_path[64];
 
 // Simple container for a single captured frame
 struct Frame {
-	uint32_t* copyOfbufferInMemory;      // Raw camera buffer from the driver
+	uint8_t* copyOfbufferInMemory;      // Raw camera buffer from the driver (grayscale pixels)
 	uint32_t timecaptured;  // Time (ms) when we grabbed it
 	bool valid;           // True if capture succeeded
 };

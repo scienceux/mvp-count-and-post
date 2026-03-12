@@ -117,7 +117,7 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     config.pixel_format = (camMode == MODE_JPEG) ? PIXFORMAT_JPEG : PIXFORMAT_GRAYSCALE;
     config.frame_size   = (camMode == MODE_JPEG) ? FRAMESIZE_VGA   : FRAMESIZE_VGA;
     config.jpeg_quality = (camMode == MODE_JPEG) ? 12              : 0;
-    config.fb_count     = (camMode == MODE_JPEG) ? 2               : 1;
+    config.fb_count     = (camMode == MODE_JPEG) ? 2               : 1;  // Grayscale: 1 buffer — we copy immediately, double buffering causes VSYNC overflow during long ops
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
@@ -160,9 +160,18 @@ Frame CameraGetCopyOfLatestFrame()
 
     // Pull eyeball out of socket to get latest frame
     camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) {
+        log_print("Failed to capture frame from camera");
+        return out;  // Return invalid frame
+    }
 
-    // Pave a parking space in memory for our (numberic) pixel data of size fb->len
-    out.copyOfbufferInMemory = (uint32_t*)malloc(fb->len);
+    // Pave a parking space in memory for our (numeric) pixel data of size fb->len
+    out.copyOfbufferInMemory = (uint8_t*)malloc(fb->len);
+    if (!out.copyOfbufferInMemory) {
+        log_print("Failed to allocate memory for frame copy");
+        esp_camera_fb_return(fb);
+        return out;  // Return invalid frame
+    }
 
     // Park actual pixel data into our parking space
     memcpy(out.copyOfbufferInMemory, fb->buf, fb->len);
@@ -181,8 +190,8 @@ Frame CameraGetCopyOfLatestFrame()
 
 void CameraRelease(const Frame& frame)
 {
-    if (frame.valid) {
-        esp_camera_fb_return((camera_fb_t*)frame.copyOfbufferInMemory);
+    if (frame.valid && frame.copyOfbufferInMemory) {
+        free(frame.copyOfbufferInMemory);  // Use free() for malloc'd memory
     }
 }
 
@@ -248,9 +257,19 @@ bool AverageFrameCreate(int numSecondsToAverage) {
 
     while ((millis() - start) < numMillisToAverage) {
         camera_fb_t* fb = esp_camera_fb_get();
-        if (!fb) { turnOffLED(); return false; }
+        if (!fb) { 
+            log_print("Warning: Failed to capture frame during averaging, skipping...");
+            delay(100);
+            continue; // Skip this frame but continue averaging
+        }
 
         // IMPORTANT: assumes fb->format == PIXFORMAT_GRAYSCALE and fb->len == NPIX
+        if (fb->len != NPIX) {
+            log_print("Warning: Frame size mismatch during averaging");
+            esp_camera_fb_return(fb);
+            delay(100); 
+            continue;
+        }
         for (size_t i = 0; i < NPIX; i++) {
             const uint8_t cur = fb->buf[i];
 

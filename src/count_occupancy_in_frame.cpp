@@ -97,6 +97,8 @@ bool FrameHasMotion(uint8_t* prev_frame, uint8_t* current_frame, size_t len)
 
 bool enterStarted = false;
 bool exitStarted = false;
+static float g_quadrantNoiseStdDev[GRID_DIFF_NUM_QUADRANTS] = { 0 };
+static bool  g_noiseCalibrated = false;
 
 
 //================================
@@ -158,8 +160,25 @@ bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_spl
 
 
 //================================
+// RAW PIXEL DIFF
+// Returns a malloc'd FW*FH buffer where each byte is abs(current[i] - avg[i]).
+// Caller must free() the returned pointer. Returns nullptr on malloc failure.
+//================================
+static uint8_t* ComputeRawPixelDiff(const uint8_t* avgFrame, const uint8_t* pixels) {
+    uint8_t* diff = (uint8_t*)malloc((size_t)FW * FH);
+    if (!diff) {
+        log_print("ComputeRawPixelDiff: malloc failed");
+        return nullptr;
+    }
+    for (uint32_t i = 0; i < (uint32_t)(FW * FH); i++) {
+        diff[i] = (uint8_t)abs((int)pixels[i] - (int)avgFrame[i]);
+    }
+    return diff;
+}
+
+//================================
 // DIVIDE & DIFF frame
-// return gridDiff struct - total diff per quadrant, minus average frame, minus average diff
+// return gridDiff struct - total diff per quadrant vs average frame
 //================================
 gridDiff DivideFrameIntoGridAndDiff() {
     gridDiff out;
@@ -181,10 +200,12 @@ gridDiff DivideFrameIntoGridAndDiff() {
         return out;
     }
 
-    const uint8_t* pixels = (uint8_t*)current_frame.copyOfbufferInMemory;
+    uint8_t* rawDiff = ComputeRawPixelDiff(avgFrame, (uint8_t*)current_frame.copyOfbufferInMemory);
+    free(current_frame.copyOfbufferInMemory);
+    if (!rawDiff) return out;
 
     // PIXEL WALK
-    // Walk every pixel, accumulate abs diff into its quadrant bucket
+    // Walk every pixel, accumulate diff into its quadrant bucket
     for (uint32_t i = 0; i < (uint32_t)(FW * FH); i++) {
 
         // Get X/Y pos
@@ -201,37 +222,19 @@ gridDiff DivideFrameIntoGridAndDiff() {
         // Which quadrant number (0 to 19 for 6x5 grid) is this pixel in?
         const uint8_t q   = row * GRID_DIFF_NUM_COLS + col; // e.g., row 1 * NUM_COLS = 6 + col 2 = quadrant 8 (third quadrant in second row)
 
-        //*******
-        // DIFF
-        const uint32_t pixeldiff = (uint32_t)abs((int)pixels[i] - (int)avgFrame[i]); // e.g., if pixels[i]=140 and avgFrame[i]=100, abs(140 - 100) = 40, so pixeldiff = 40
-        out.quadrantDiff[q] += pixeldiff;
+        out.quadrantDiff[q] += rawDiff[i];
     }
 
-    //------------------------
-    // Extra DIFF
-    // Get average quadrant diff across all quadrants, then subtract it from each quadrant.
-    // This helps suppress scene-wide changes (for example, overall brightness shifting everywhere at once).
-    uint64_t totalQuadrantDiff = 0;
-    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
-        totalQuadrantDiff += out.quadrantDiff[q];
-    }
+    free(rawDiff);
 
-    out.averageQuadrantDiff = (uint32_t)(totalQuadrantDiff / GRID_DIFF_NUM_QUADRANTS);
-
-    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
-        if (out.quadrantDiff[q] > out.averageQuadrantDiff) {
-            out.quadrantDiff[q] -= out.averageQuadrantDiff;
-        } else {
-            out.quadrantDiff[q] = 0;
+    // If noise is calibrated, compute Z-score for each quadrant
+    if (g_noiseCalibrated) {
+        for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+            out.noiseZ[q] = (float)out.quadrantDiff[q] / g_quadrantNoiseStdDev[q];
         }
     }
-    //------------------------
-
-
-    free(current_frame.copyOfbufferInMemory);
 
     out.valid = true;
-
     return out;
 }
 
@@ -315,6 +318,49 @@ bool BuildGridDiffDebugImageJpg(uint8_t** jpgBufOut, size_t* jpgLenOut) {
 
 
 //================================
+// DEBUG ONLY
+// Build a pixel-level grayscale diff image (current frame minus average frame) as JPEG.
+// Uses ComputeRawPixelDiff() — same diff as DivideFrameIntoGridAndDiff(), guaranteed in sync.
+//================================
+bool BuildPixelDiffDebugImageJpg(uint8_t** jpgBufOut, size_t* jpgLenOut) {
+    if (!jpgBufOut || !jpgLenOut) {
+        log_print("BuildPixelDiffDebugImageJpg: null output pointer");
+        return false;
+    }
+    *jpgBufOut = nullptr;
+    *jpgLenOut = 0;
+
+    const uint8_t* avgFrame = CameraGetAverageFrame();
+    if (!avgFrame) {
+        log_print("BuildPixelDiffDebugImageJpg: no average frame");
+        return false;
+    }
+
+    Frame current_frame = CameraGetCopyOfLatestFrame();
+    if (!current_frame.valid) {
+        log_print("BuildPixelDiffDebugImageJpg: no current frame");
+        return false;
+    }
+
+    uint8_t* rawDiff = ComputeRawPixelDiff(avgFrame, (uint8_t*)current_frame.copyOfbufferInMemory);
+    free(current_frame.copyOfbufferInMemory);
+    if (!rawDiff) return false;
+
+    bool ok = fmt2jpg(rawDiff, (size_t)FW * FH, FW, FH, PIXFORMAT_GRAYSCALE, 80, jpgBufOut, jpgLenOut);
+    free(rawDiff);
+
+    if (!ok) {
+        if (*jpgBufOut) { free(*jpgBufOut); *jpgBufOut = nullptr; }
+        *jpgLenOut = 0;
+        log_print("BuildPixelDiffDebugImageJpg: fmt2jpg failed");
+        return false;
+    }
+
+    return true;
+}
+
+
+//================================
 // v2 Enter/Exit Detection using quadrant grid + average frame diff
 //================================
 bool EnterExitDetector_v2_wAvg() {
@@ -333,10 +379,14 @@ bool EnterExitDetector_v2_wAvg() {
     uint8_t spikingRight = 0;
 
     for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
-        if (currentDiff.quadrantDiff[q] > howMuchDiffCountsAsASpike) {
+        // Use Z-score threshold if calibrated, otherwise fall back to raw diff
+        bool spike = g_noiseCalibrated
+            ? (currentDiff.noiseZ[q] > 2.0f)
+            : (currentDiff.quadrantDiff[q] > howMuchDiffCountsAsASpike);
+        if (spike) {
             const uint8_t col = q % GRID_DIFF_NUM_COLS;
             if (col < GRID_DIFF_NUM_COLS / 2) spikingLeft++;
-            else                    spikingRight++;
+            else                              spikingRight++;
         }
     }
 
@@ -366,7 +416,7 @@ bool EnterExitDetector_v2_wAvg() {
         log_print("Enter");
         extern int g_EntersCount;
         g_EntersCount++;
-        SaveEvent("ENTER");
+        // SaveEvent("ENTER"); // Disable logging for now
         
 
         
@@ -403,10 +453,10 @@ bool EnterExitDetector_v2_wAvg() {
         // EXIT!
         //**********
         exitStarted = false;
-        log_print("Exit confirmed");
+        log_print("Exit");
         extern int g_ExitsCount;
         g_ExitsCount++;
-        SaveEvent("EXIT");
+        // SaveEvent("EXIT"); // Disable logging for now
         
 
         //===================================        
@@ -445,4 +495,88 @@ bool EnterExitDetector_v2_wAvg() {
     }
 
     return false;
+}
+
+// Per-quadrant noise floor, populated by CalibrateNoise()
+const float* GetQuadrantNoiseStdDev() { return g_quadrantNoiseStdDev; }
+bool IsNoiseCalibrated()              { return g_noiseCalibrated; }
+
+//================================
+// CALIBRATE NOISE FLOOR
+// Capture N seconds of empty-room frames and compute per-quadrant noise std dev
+// using Welford's online algorithm. Call after AverageFrameCreate(), room empty.
+//================================
+bool CalibrateNoise(int seconds) {
+    const uint8_t* avgFrame = CameraGetAverageFrame();
+    if (!avgFrame) {
+        log_print("CalibrateNoise: no average frame");
+        return false;
+    }
+
+    const uint16_t QUAD_W = FW / GRID_DIFF_NUM_COLS;
+    const uint16_t QUAD_H = FH / GRID_DIFF_NUM_ROWS;
+
+    // Welford's algorithm accumulators per quadrant.
+    // Static to avoid consuming ~720 bytes of loopTask stack — CalibrateNoise is never re-entrant.
+    static double mean[GRID_DIFF_NUM_QUADRANTS];
+    static double M2[GRID_DIFF_NUM_QUADRANTS];
+    static uint32_t count[GRID_DIFF_NUM_QUADRANTS];
+    memset(mean,  0, sizeof(mean));
+    memset(M2,    0, sizeof(M2));
+    memset(count, 0, sizeof(count));
+
+    const uint32_t durationMs = (uint32_t)seconds * 1000UL;
+    const uint32_t start = millis();
+    uint32_t frameCount = 0;
+
+    log_print(String("Calibrating noise floor for ") + seconds + " seconds...");
+
+    while ((millis() - start) < durationMs) {
+        Frame f = CameraGetCopyOfLatestFrame();
+        if (!f.valid) { delay(100); continue; }
+
+        uint8_t* rawDiff = ComputeRawPixelDiff(avgFrame, (uint8_t*)f.copyOfbufferInMemory);
+        free(f.copyOfbufferInMemory);
+        if (!rawDiff) continue;
+
+        // Accumulate quadrant diff sums for this frame
+        static uint32_t quadSum[GRID_DIFF_NUM_QUADRANTS];
+        memset(quadSum, 0, sizeof(quadSum));
+        for (uint32_t i = 0; i < (uint32_t)(FW * FH); i++) {
+            const uint16_t x = i % FW;
+            const uint16_t y = i / FW;
+            const uint8_t col = min((uint8_t)(x / QUAD_W), (uint8_t)(GRID_DIFF_NUM_COLS - 1));
+            const uint8_t row = min((uint8_t)(y / QUAD_H), (uint8_t)(GRID_DIFF_NUM_ROWS - 1));
+            const uint8_t q   = row * GRID_DIFF_NUM_COLS + col;
+            quadSum[q] += rawDiff[i];
+        }
+        free(rawDiff);
+
+        // Welford's online update per quadrant
+        for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+            count[q]++;
+            double delta  = (double)quadSum[q] - mean[q];
+            mean[q]      += delta / count[q];
+            double delta2 = (double)quadSum[q] - mean[q];
+            M2[q]        += delta * delta2;
+        }
+
+        frameCount++;
+        delay(100);
+    }
+
+    if (frameCount < 2) {
+        log_print("CalibrateNoise: not enough frames");
+        return false;
+    }
+
+    // Finalise std dev — clamp to minimum of 1.0 to avoid division by zero
+    for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+        float std_dev = (float)sqrt(M2[q] / (count[q] - 1));
+        g_quadrantNoiseStdDev[q] = max(std_dev, 1.0f);
+    }
+
+    g_noiseCalibrated = true;
+    log_print(String("CalibrateNoise: done, ") + frameCount + " frames");
+    return true;
 }
