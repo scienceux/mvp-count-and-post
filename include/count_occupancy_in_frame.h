@@ -17,7 +17,6 @@ const uint8_t GRID_DIFF_NUM_QUADRANTS  = GRID_DIFF_NUM_COLS * GRID_DIFF_NUM_ROWS
 
 struct gridDiff {
     uint32_t quadrantDiff[GRID_DIFF_NUM_QUADRANTS] = { 0 };
-    float    noiseZ[GRID_DIFF_NUM_QUADRANTS]        = { 0 };  // Z-score vs calibrated noise floor (0 if not calibrated)
     uint32_t averageQuadrantDiff = 0;
     bool valid = false;
 };
@@ -44,18 +43,10 @@ SplitFrame CameraGetSplitFrame(Frame frameToSplit);
 // Builds the current grid diff against the average frame using the shared detector logic.
 gridDiff DivideFrameIntoGridAndDiff();
 
-// Capture N seconds of empty-room frames and compute per-quadrant noise std dev.
-// Call after AverageFrameCreate() with the room empty.
-bool CalibrateNoise(int seconds);
-
-const float* GetQuadrantNoiseStdDev();
-bool IsNoiseCalibrated();
-
 // DEBUG ONLY:
 // Builds a JPEG image from the processed grid diff so the debug page background
 // can use the same diff output without affecting normal counting performance.
 bool BuildGridDiffDebugImageJpg(uint8_t** jpgBufOut, size_t* jpgLenOut);
-bool BuildPixelDiffDebugImageJpg(uint8_t** jpgBufOut, size_t* jpgLenOut);
 
 // Detects enter/exit events based on changes in brightness between two frames
 bool EnterExitDetector(SplitFrame prev_frame, SplitFrame current_frame);
