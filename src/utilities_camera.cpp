@@ -216,6 +216,7 @@ const uint8_t* CameraGetAverageFrame() {
 }
 
 
+// Saves one copy in memory (actually used), and one on SD card for debugging
 // Capture and exponentially average frames for numSecondsToAverage seconds,
 // then save the result as a JPEG to /average-frames/ on the SD card.
 // Update g_avgFrame in-place in PSRAM, which we can read later via CameraGetAverageFrame() for motion detection.
@@ -232,10 +233,18 @@ bool AverageFrameCreate(int numSecondsToAverage) {
         SD.mkdir("/average-frames");
     }
 
+    // Alpha is the fraction of the difference between current average and new frame that we add to the average each time.
+    // To help visualize this, imagine the average frame is a leaky bucket that fills up with brightness from new frames and leaks out old brightness over time. Alpha controls how big the bucket is and how fast it leaks:
+    // - If alpha is close to 1, the bucket is big and leaks slowly, so the average frame changes quickly with new frames but is also very sensitive to sudden brightness changes (e.g. lights turning on/off).    
+    // - If alpha is close to 0, the bucket is small and leaks quickly, so the average frame changes slowly with new frames but is more stable against sudden brightness changes.
     const float alpha = 0.05f;
     const size_t NPIX = (size_t)FW * (size_t)FH;
 
     // Allocate the global PSRAM buffer once; reuse it on subsequent calls
+    // PSRAM, as opposed to regular RAM, is necessary for this because the average frame is large (307,200 bytes for VGA) and we don't want to eat up all our regular RAM or spend time copying it around.
+    // On xiao esp32s3 sense, the PSRAM can hold one full average frame, but not two, so we update it in place without making copies.
+    // On xiao esp32s3 sense, the RAM could hold multiple average frames, but we still choose to use PSRAM for the stability and performance reasons above.
+    // If not allocated yet, allocate it and zero it out. If allocation fails, log and bail.
     if (!g_avgFrame) {
         g_avgFrame = (uint8_t*)ps_malloc(NPIX);
         if (!g_avgFrame) {
@@ -246,7 +255,8 @@ bool AverageFrameCreate(int numSecondsToAverage) {
         memset(g_avgFrame, 0, NPIX);
     }
 
-    while ((millis() - start) < numMillisToAverage) {
+    // Capture frames and update average until time's up
+    while ((millis() - start) < numMillisToAverage) { // numMillisToAverage are from numSecondsToAverage
         camera_fb_t* fb = esp_camera_fb_get();
         if (!fb) { turnOffLED(); return false; }
 
