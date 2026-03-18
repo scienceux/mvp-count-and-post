@@ -1,6 +1,7 @@
 #include "utilities_wifi.h"
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 
 // Helper function to convert WiFi status to descriptive text
 const char* wifi_status_to_string(wl_status_t status)
@@ -48,7 +49,7 @@ int wifi_scan_for_network(const char* ssid)
   return -998; // Network not found
 }
 
-bool wifi_connect(const char* ssid, const char* user, const char* pass)
+bool wifi_connect(const char* ssid, const char* user, const char* pass, const char* hostname)
 {
   (void)user;
 
@@ -109,6 +110,11 @@ bool wifi_connect(const char* ssid, const char* user, const char* pass)
     Serial.printf("  Signal strength: %ddBm\n", WiFi.RSSI());
     Serial.printf("  Gateway: %s\n", WiFi.gatewayIP().toString().c_str());
     Serial.printf("  DNS: %s\n", WiFi.dnsIP().toString().c_str());
+    if (MDNS.begin(hostname)) {
+      Serial.printf("  mDNS: http://%s.local\n", hostname);
+    } else {
+      Serial.println("  mDNS: failed to start");
+    }
     return true;
   }
 

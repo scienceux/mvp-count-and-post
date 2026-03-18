@@ -8,7 +8,7 @@
 // CSV name format (no WiFi):  /logs/After-2026-03-17_1602_device01.csv
 
 // Device ID — replace later with value read from flash/preferences
-const char* DEVICE_ID = "device01";
+const char* DEVICE_ID = "living-room";
 
 // Full path to the current CSV file on SD card
 char g_csvPath[64] = {0};
@@ -28,9 +28,9 @@ static void SetClockFromLastCSVEntry(const char* path) {
     }
     f.close();
 
-    // Row format: "2026-03-17 Mon 16:02:00,ENTER,device01,ntp"
+    // Row format: "2026-03-18 16:02:00,Wednesday,ENTER,hallway,ntp"
     struct tm t = {};
-    if (sscanf(lastRow, "%4d-%2d-%2d %*s %2d:%2d:%2d",
+    if (sscanf(lastRow, "%4d-%2d-%2d %2d:%2d:%2d",
                &t.tm_year, &t.tm_mon, &t.tm_mday,
                &t.tm_hour, &t.tm_min, &t.tm_sec) == 6) {
         t.tm_year -= 1900;
@@ -133,7 +133,7 @@ bool CreateCSVFile() {
 }
 
 // Weekday name lookup
-static const char* kWeekdays[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+static const char* kWeekdays[] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
 
 // Appends one timestamped event row to the CSV
 // eventType should be "ENTER" or "EXIT"
@@ -144,12 +144,12 @@ bool SaveEvent(const char* eventType) {
 
     TimeExact t = WhatTimeIsItExactly();
 
-    char row[80];
+    char row[96];
     snprintf(row, sizeof(row),
-        "%04d-%02d-%02d %s %02d:%02d:%02d,%s,%s,%s",
+        "%04d-%02d-%02d %02d:%02d:%02d,%s,%s,%s,%s",
         t.year, t.month, t.day,
-        kWeekdays[t.weekday],
         t.hour, t.minute, t.second,
+        kWeekdays[t.weekday],
         eventType, DEVICE_ID,
         g_wifiSetTime ? "ntp" : "estimated");
 

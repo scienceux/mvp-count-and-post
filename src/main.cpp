@@ -101,7 +101,7 @@ void setup() {
 
   // WiFi and clock are set up BEFORE the camera so that WiFi channel scanning
   // does not cause VSYNC overflow in the camera DMA pipeline (cam_task stack overflow).
-  bool wifiOk = wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS);
+  bool wifiOk = wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS, DEVICE_ID);
   if (wifiOk) {
     log_print("WiFi connected.");
     turn_on_remote_serial_monitoring();
