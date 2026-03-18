@@ -56,10 +56,10 @@ namespace
 
 bool setupClock(const char* ssid, const char* user, const char* pass)
 {
-    if ( !WiFi.status() == WL_CONNECTED) {
+    if ( WiFi.status() != WL_CONNECTED) {
         log_print("Cannot sync clock: WiFi not connected");
         return false;
-    }    
+    } 
 
     configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
 
