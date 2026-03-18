@@ -100,45 +100,28 @@ bool exitStarted = false;
 
 
 //================================
-// Simple Enter/Exit Detection Based on Left vs Right Brightness Changes
-// Call these first in main to create the SplitFrame
-    // Save copy of one frame to memory, then release it so camera can reuse the buffer (and we don't run out of memory)
-    // Frame prev_frame = CameraGetCopyOfLatestFrame();
-    // delay(100);
-    // Frame current_frame = CameraGetCopyOfLatestFrame();
-//    SplitFrame prev_frame_split = CameraGetSplitFrame(prev_frame);
-//    SplitFrame current_frame_split = CameraGetSplitFrame(current_frame);
-
-// then:
-    // free(prev_frame.copyOfbufferInMemory);
-    // free(current_frame.copyOfbufferInMemory);
+// v1 Enter/Exit (LEGACY — kept for reference, no longer called)
 //================================
 bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_split) {
     uint32_t changeInBrightnessLeft  = abs(current_frame_split.leftBrightness  - prev_frame_split.leftBrightness);
     uint32_t changeInBrightnessRight = abs(current_frame_split.rightBrightness - prev_frame_split.rightBrightness);
-    uint32_t threshold = 1000000; // Total brightness can reach into the tens of millions, so this threshold is in the millions.
-    // log_print("Change in brightness:    " + String(changeInBrightnessLeft)    + " | " + String(changeInBrightnessRight));
+    uint32_t threshold = 1000000;
 
     if ( !enterStarted && !exitStarted ) {
         if ( (changeInBrightnessLeft > changeInBrightnessRight) && (changeInBrightnessLeft > threshold) ) {
             enterStarted = true;
-            log_print("Enter started");
         } else if ( (changeInBrightnessRight > changeInBrightnessLeft) && (changeInBrightnessRight > threshold) ) {
             exitStarted = true;
-            log_print("Exit started");
         }
     }
 
-    // Then they cross into other half of frame, so we know they fully entered or exited
     if ( enterStarted && (changeInBrightnessRight > threshold) ) {
         enterStarted = false;
-        log_print("Enter");
         extern int g_EntersCount;
         g_EntersCount++;
         return true;
     } else if ( exitStarted && (changeInBrightnessLeft > threshold) ) {
         exitStarted = false;
-        log_print("Exit");
         extern int g_ExitsCount;
         g_ExitsCount++;
         return true;
@@ -147,13 +130,10 @@ bool EnterExitDetector(SplitFrame prev_frame_split, SplitFrame current_frame_spl
     if ( (enterStarted || exitStarted) && (changeInBrightnessLeft < threshold) && (changeInBrightnessRight < threshold) ) {
         enterStarted = false;
         exitStarted = false;
-        log_print("Reset");
         return true;
-    } 
+    }
 
-
-    return false;  
-
+    return false;
 }
 
 
@@ -208,7 +188,25 @@ gridDiff DivideFrameIntoGridAndDiff() {
     }
 
     //------------------------
-    // Extra DIFF
+    // BRIGHTNESS NORMALIZATION
+    // Normalize each quadrant's diff by its average brightness so the score represents
+    // percentage change rather than absolute change. A 20-point diff in a dark corner
+    // (avg=40) scores higher than a 20-point diff near a bright window (avg=200).
+    // Formula per quadrant: normalizedDiff = rawDiff / max(avgBrightness, B_MIN)
+    // B_MIN prevents dark quadrants from blowing up on sensor noise.
+    const uint32_t B_MIN = 10;
+    const uint32_t* quadAvgBrightness = CameraGetQuadrantAvgBrightness();
+
+    if (quadAvgBrightness) {
+        for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
+            uint32_t divisor = quadAvgBrightness[q];
+            if (divisor < B_MIN) divisor = B_MIN;
+            out.quadrantDiff[q] = out.quadrantDiff[q] / divisor;
+        }
+    }
+
+    //------------------------
+    // SCENE-WIDE SUPPRESSION
     // Get average quadrant diff across all quadrants, then subtract it from each quadrant.
     // This helps suppress scene-wide changes (for example, overall brightness shifting everywhere at once).
     uint64_t totalQuadrantDiff = 0;
@@ -315,133 +313,126 @@ bool BuildGridDiffDebugImageJpg(uint8_t** jpgBufOut, size_t* jpgLenOut) {
 
 
 //================================
-// v2 Enter/Exit Detection using quadrant grid + average frame diff
+// v3 Enter/Exit Detection — grid history + weighted center column tracking
+//
+// Instead of collapsing 30 quadrants into two numbers (left/right), this tracks
+// the actual motion path through the grid over time by storing recent grid snapshots
+// and computing a weighted center column each frame.
+//
+// If the center column moves from left to right over several frames = ENTER.
+// If it moves right to left = EXIT.
 //================================
-bool EnterExitDetector_v2_wAvg() {
-    // log_print("counting occupancy in frame...");
 
-    const uint32_t howMuchDiffCountsAsASpike           = 200000;  // total abs diff per quadrant to count as a spike
-    const uint8_t  howManyQuadrantsSpikeCountsAsMotion = 2;       // need at least 2 spiking quadrants on a side to count
+// -- Tuning knobs --
+// Spike threshold: since diffs are now brightness-normalized (divided by per-quadrant avg),
+// the values are much smaller than the old raw diffs. Each quadrant has ~15,360 pixels
+// (106*96 for most quadrants). A normalized diff of ~2 per pixel across half the quadrant
+// is a reasonable motion signal.
+static const uint32_t SPIKE_THRESHOLD           = 1500;  // normalized diff sum per quadrant to count as spiking
+static const uint8_t  MIN_SPIKING_QUADRANTS     = 2;     // need at least this many spiking quadrants in a frame to consider it "motion"
+static const uint32_t COOLDOWN_MS               = 800;   // ignore new events for this long after a detection
+static const uint32_t MAX_HISTORY_AGE_MS        = 2000;  // discard history entries older than this (guards against stalls from SD writes, avg frame recompute, etc.)
+
+// -- Grid history ring buffer --
+static const uint8_t  HISTORY_LEN               = 5;     // number of frames of history to keep (~1.25s at 4fps)
+
+static float    g_centerColHistory[HISTORY_LEN];
+static bool     g_motionActiveHistory[HISTORY_LEN];
+static uint32_t g_historyTimestamps[HISTORY_LEN];
+static uint8_t  g_historyHead    = 0;
+static uint8_t  g_historyCount   = 0;
+static uint32_t g_lastEventMs    = 0;
+
+bool EnterExitDetector_v2_wAvg() {
 
     gridDiff currentDiff = DivideFrameIntoGridAndDiff();
     if (!currentDiff.valid) {
         return false;
     }
 
-    // Count how many quadrants spiked on each side
-    uint8_t spikingLeft  = 0;
-    uint8_t spikingRight = 0;
+    // Find spiking quadrants and compute weighted center column.
+    // Weight = quadrant diff value, position = column index.
+    uint8_t  spikingCount = 0;
+    uint64_t weightedColSum = 0;
+    uint64_t totalWeight    = 0;
 
     for (uint8_t q = 0; q < GRID_DIFF_NUM_QUADRANTS; q++) {
-        if (currentDiff.quadrantDiff[q] > howMuchDiffCountsAsASpike) {
+        if (currentDiff.quadrantDiff[q] > SPIKE_THRESHOLD) {
+            spikingCount++;
             const uint8_t col = q % GRID_DIFF_NUM_COLS;
-            if (col < GRID_DIFF_NUM_COLS / 2) spikingLeft++;
-            else                    spikingRight++;
+            weightedColSum += (uint64_t)col * currentDiff.quadrantDiff[q];
+            totalWeight    += currentDiff.quadrantDiff[q];
         }
     }
 
-    // log_print("Spiking L: " + String(spikingLeft) + " R: " + String(spikingRight));
+    bool motionActive = (spikingCount >= MIN_SPIKING_QUADRANTS && totalWeight > 0);
+    float centerCol   = motionActive ? (float)weightedColSum / (float)totalWeight : -1.0f;
 
-    // --- State machine (same logic as v1, now driven by quadrant spike counts) ---
+    // Push into ring buffer
+    g_centerColHistory[g_historyHead]     = centerCol;
+    g_motionActiveHistory[g_historyHead]  = motionActive;
+    g_historyTimestamps[g_historyHead]    = millis();
+    g_historyHead = (g_historyHead + 1) % HISTORY_LEN;
+    if (g_historyCount < HISTORY_LEN) g_historyCount++;
 
-    if (!enterStarted && !exitStarted) {
-        if (spikingLeft >= howManyQuadrantsSpikeCountsAsMotion && spikingLeft > spikingRight) {
-            enterStarted = true;
-            log_print("Enter started");
-            return false;
-        } else if (spikingRight >= howManyQuadrantsSpikeCountsAsMotion && spikingRight > spikingLeft) {
-            exitStarted = true;
-            log_print("Exit started");
-            return false;
+    // Need at least 3 frames of history to detect a crossing
+    if (g_historyCount < 3) return false;
+
+    // Cooldown — don't double-count
+    if ((millis() - g_lastEventMs) < COOLDOWN_MS) return false;
+
+    // Find the oldest and newest frames in history that have active motion.
+    // Walk the ring buffer from oldest to newest, skipping stale entries.
+    const uint32_t now = millis();
+    float firstActiveCol = -1.0f;
+    float lastActiveCol  = -1.0f;
+    uint8_t activeFrames = 0;
+
+    for (uint8_t i = 0; i < g_historyCount; i++) {
+        uint8_t idx = (g_historyHead + HISTORY_LEN - g_historyCount + i) % HISTORY_LEN;
+        if ((now - g_historyTimestamps[idx]) > MAX_HISTORY_AGE_MS) continue;
+        if (g_motionActiveHistory[idx]) {
+            if (firstActiveCol < 0.0f) firstActiveCol = g_centerColHistory[idx];
+            lastActiveCol = g_centerColHistory[idx];
+            activeFrames++;
         }
     }
 
-    // Confirmed crossing: started on one side, now the other side spikes
-    if (enterStarted && spikingRight >= howManyQuadrantsSpikeCountsAsMotion) {
-        enterStarted = false;
+    // Need motion in at least 2 frames to establish direction
+    if (activeFrames < 2) return false;
 
-        //**********
-        // ENTER!
-        //**********wa
+    float colShift = lastActiveCol - firstActiveCol;
+
+    // The grid has columns 0-5. A full crossing is ~5 columns.
+    // Require the center to shift by at least ~2 columns to count as a real crossing.
+    const float MIN_COL_SHIFT = 1.8f;
+
+    if (colShift > MIN_COL_SHIFT) {
+        // Motion went left → right = ENTER
+        g_lastEventMs = millis();
+
+        // Clear history so we don't re-detect the same motion
+        g_historyCount = 0;
+        g_historyHead  = 0;
+
         log_print("Enter");
         extern int g_EntersCount;
         g_EntersCount++;
         SaveEvent("ENTER");
-        
-
-        
-        //_________________________   
-        // FOR DEBUG: Save frame diff (not frame) as diffred frame to SD in /enters folder for later review and threshold tuning
-        // Get diff frame (current frame - average frame)
-        // uint8_t* diffFrame = (uint8_t*)malloc(FW * FH);
-        // for (uint32_t i = 0; i < (FW * FH); i++) {
-        //     diffFrame[i] = (uint8_t)abs((int)pixels[i] - (int)avgFrame[i]);
-        // }
-        // Save diff frame as JPEG to SD card
-        // char path[64];
-        // sprintf(path, "/enters/last_enter.jpg", millis());
-        // uint8_t* jpgBuf = nullptr;
-        // size_t jpgLen = 0;
-        // bool ok = fmt2jpg(diffFrame, (size_t)FW * FH, FW, FH, PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
-        // if (ok && jpgBuf) {
-        //     File f = SD.open(path, FILE_WRITE);
-        //     if (f) {
-        //         f.write(jpgBuf, jpgLen);
-        //         f.close();
-        //     }
-        //     free(jpgBuf);
-        // }
-        // free(diffFrame);
-        //_________________________   
-
-
-
         return true;
-    } else if (exitStarted && spikingLeft >= howManyQuadrantsSpikeCountsAsMotion) {
 
-        //**********
-        // EXIT!
-        //**********
-        exitStarted = false;
-        log_print("Exit confirmed");
+    } else if (colShift < -MIN_COL_SHIFT) {
+        // Motion went right → left = EXIT
+        g_lastEventMs = millis();
+
+        g_historyCount = 0;
+        g_historyHead  = 0;
+
+        log_print("Exit");
         extern int g_ExitsCount;
         g_ExitsCount++;
         SaveEvent("EXIT");
-        
-
-        //===================================        
-        // FOR DEBUG: Save frame diff (not frame) as diffred frame to SD in /exits folder for later review and threshold tuning
-        // Get diff frame (current frame - average frame)
-        // uint8_t* diffFrame = (uint8_t*)malloc(FW * FH);
-        // for (uint32_t i = 0; i < (FW * FH); i++) {
-        //     diffFrame[i] = (uint8_t)abs((int)pixels[i] - (int)avgFrame[i]);
-        // }
-        // // Save diff frame as JPEG to SD card
-        // char path[64];
-        // sprintf(path, "/exits/exit_diff_%lu.jpg", millis());
-        // uint8_t* jpgBuf = nullptr;
-        // size_t jpgLen = 0;
-        // bool ok = fmt2jpg(diffFrame, (size_t)FW * FH, FW, FH, PIXFORMAT_GRAYSCALE, 80, &jpgBuf, &jpgLen);
-        // if (ok && jpgBuf) {
-        //     File f = SD.open(path, FILE_WRITE);
-        //     if (f) {
-        //         f.write(jpgBuf, jpgLen);
-        //         f.close();
-        //     }
-        //     free(jpgBuf);
-        // }
-        // free(diffFrame);
-        //=================================== 
-        
         return true;
-    }
-
-    // Reset if motion died out before completing a crossing
-    if ((enterStarted || exitStarted) && spikingLeft < howManyQuadrantsSpikeCountsAsMotion && spikingRight < howManyQuadrantsSpikeCountsAsMotion) {
-        enterStarted = false;
-        exitStarted  = false;
-        log_print("Reset");
-        return false;
     }
 
     return false;

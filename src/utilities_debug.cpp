@@ -289,8 +289,8 @@ a{color:#1a6aff;}
 
 <div class='row'>
   <label>Spike threshold (per-quadrant diff sum):</label>
-  <input type='range' id='sl' min='0' max='500000' step='1000' value='200000' style='flex:1;min-width:160px;'>
-  <span id='sv' style='min-width:64px;text-align:right;'>200000</span>
+  <input type='range' id='sl' min='0' max='10000' step='50' value='1500' style='flex:1;min-width:160px;'>
+  <span id='sv' style='min-width:64px;text-align:right;'>1500</span>
 </div>
 
 <div class='key'>

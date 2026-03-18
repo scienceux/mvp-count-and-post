@@ -1,0 +1,4 @@
+#ifndef COUNT_ENTER_EXIT_H
+#define COUNT_ENTER_EXIT_H
+
+#endif // COUNT_ENTER_EXIT_H

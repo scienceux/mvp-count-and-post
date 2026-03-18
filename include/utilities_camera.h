@@ -40,6 +40,11 @@ bool AverageFrameCreate(int numSecondsToAverage);
 // Returns pointer to the global PSRAM average frame buffer (FW*FH bytes), or nullptr if not yet created.
 const uint8_t* CameraGetAverageFrame();
 
+// Returns pointer to array of per-quadrant average brightness values (GRID_DIFF_NUM_QUADRANTS elements).
+// Each value is the mean pixel brightness (0-255) of that quadrant in the average frame.
+// Computed during AverageFrameCreate(). Returns nullptr if not yet computed.
+const uint32_t* CameraGetQuadrantAvgBrightness();
+
 extern const int FW;
 extern const int FH;
 

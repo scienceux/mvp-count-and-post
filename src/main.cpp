@@ -41,7 +41,7 @@ char global_csv_path[64] = "/occupancy.csv";
 
 
 // WiFi config (STA)
-const char* WIFI_SSID = "posterbuddy";
+const char* WIFI_SSID = "posterbuddyTR";
 const char* WIFI_USER = ""; // unused for WPA2-PSK
 const char* WIFI_PASS = "money4connie";
 //==================================================
@@ -59,6 +59,8 @@ void setup() {
   // Initialize serial communication for debugging (optional)
   Serial.begin(9600);
   delay(5000);
+
+  log_print(psramFound() ? "PSRAM: OK" : "PSRAM: NOT FOUND - camera may crash");
 
   log_print(DEVICE_MODE);
   
@@ -84,18 +86,10 @@ void setup() {
     log_print("LED setup failed.");
   }
 
-  bool cameraOk = CameraSetup(CAMERA_FPS, DEVICE_MODE);
-  if (cameraOk) {
-    log_print("Camera setup successful.");
-    blinkLED(2, "fast");
-  } else {
-    log_print("Camera setup failed.");
-  }
-
   bool sdOk = setupSDCard();
   if (sdOk) {
     log_print("SD Card setup successful.");
-    blinkLED(3, "fast");
+    blinkLED(2, "fast");
   } else {
     log_print("SD Card setup failed.");
     // Fail and blink SOS pattern if SD card is not working, since it's critical for operation
@@ -105,6 +99,8 @@ void setup() {
     }
   }
 
+  // WiFi and clock are set up BEFORE the camera so that WiFi channel scanning
+  // does not cause VSYNC overflow in the camera DMA pipeline (cam_task stack overflow).
   bool wifiOk = wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS);
   if (wifiOk) {
     log_print("WiFi connected.");
@@ -122,6 +118,14 @@ void setup() {
 
   } else {
     log_print("Clock sync failed.");
+  }
+
+  bool cameraOk = CameraSetup(CAMERA_FPS, DEVICE_MODE);
+  if (cameraOk) {
+    log_print("Camera setup successful.");
+    blinkLED(3, "fast");
+  } else {
+    log_print("Camera setup failed.");
   }
 
   // Test LED

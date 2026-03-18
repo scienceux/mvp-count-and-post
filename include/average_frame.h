@@ -1,0 +1,4 @@
+#ifndef AVERAGE_FRAME_H
+#define AVERAGE_FRAME_H
+
+#endif // AVERAGE_FRAME_H
