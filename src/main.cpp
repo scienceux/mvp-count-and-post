@@ -111,7 +111,8 @@ void setup() {
   }
 
   bool clockOk = setupClock(WIFI_SSID, WIFI_USER, WIFI_PASS);
-  if ( clockOk) {
+  if (clockOk) {
+    g_wifiSetTime = true;   // ← add this
     log_print("Clock synced.");
     TimeExact theTime = WhatTimeIsItExactly();
     log_print(String("Current time: ") + theTime.hour + ":" + theTime.minute + ":" + theTime.second);
