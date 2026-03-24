@@ -3,17 +3,83 @@
 #include <SD.h>
 #include "utilities_time.h"
 #include "utilities_debug.h"
+#include "WiFi.h"
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
 
 // CSV name format (WiFi on):  /logs/2026-03-17_1602_device01.csv
 // CSV name format (no WiFi):  /logs/After-2026-03-17_1602_device01.csv
 
 // Device ID — replace later with value read from flash/preferences
 const char* DEVICE_ID = "living-room";
+const char* EVENT_NAME = "EASL2026";
+const char* API_URL = "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4da9DU8ci3qPRs9zRLqpAAVbiCkEpDq82b6GQKW-QwOY3Z-Erg/exec";
 
 // Full path to the current CSV file on SD card
 char g_csvPath[64] = {0};
 
 bool g_wifiSetTime = false;
+
+static String UrlEncodeFormValue(const char* value) {
+    String encoded;
+    while (*value) {
+        const unsigned char ch = static_cast<unsigned char>(*value++);
+        if ((ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '_' || ch == '.' || ch == '*') {
+            encoded += static_cast<char>(ch);
+        } else if (ch == ' ') {
+            encoded += '+';
+        } else {
+            char hex[4];
+            snprintf(hex, sizeof(hex), "%%%02X", ch);
+            encoded += hex;
+        }
+    }
+    return encoded;
+}
+
+bool UploadEventToServer(const char* row) {
+    if (WiFi.status() != WL_CONNECTED) {
+        log_print("Not connected to WiFi, cannot upload event");
+        return false;
+    }
+
+    const char* basename = strrchr(g_csvPath, '/');
+    basename = basename ? basename + 1 : g_csvPath;
+
+    String query = "eventId=" + UrlEncodeFormValue(EVENT_NAME) +
+                   "&rows=" + UrlEncodeFormValue(row);
+    String requestUrl = String(API_URL) + "?" + query;
+
+    WiFiClientSecure client;
+    client.setInsecure(); // Google certs change often; insecure is usually safer for IoT
+    
+    HTTPClient http;
+    
+    // Use query params with GET to avoid current POST path issues.
+    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    http.begin(client, requestUrl);
+    http.addHeader("User-Agent", "PosterBuddyESP32");
+
+    int httpCode = http.GET();
+
+    String response = http.getString();
+    
+    if (httpCode > 0) {
+        log_print("HTTP Code: " + String(httpCode));
+        // if (httpCode == 200) {
+        //     log_print("Success: " + response);
+        // }
+    } else {
+        log_print("Error: " + http.errorToString(httpCode));
+    }
+
+    http.end();
+    return httpCode == 200;
+}
 
 
 // Reads the last data row of a CSV and sets the system RTC to that timestamp.
@@ -163,6 +229,9 @@ bool SaveEvent(const char* eventType) {
     f.flush();
     f.close();
     log_print("Event saved: " + String(row));
+
+    UploadEventToServer(row);
+        
     return true;
 }
 

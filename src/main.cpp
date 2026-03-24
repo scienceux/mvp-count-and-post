@@ -149,6 +149,10 @@ void setup() {
 
   NameTheCSVFile();
   CreateCSVFile();
+
+  SaveEvent("POWERED_ON");
+
+  
 }
 
 void loop() {
