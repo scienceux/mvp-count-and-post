@@ -418,7 +418,8 @@ bool EnterExitDetector_v2_wAvg() {
         log_print("Enter");
         extern int g_EntersCount;
         g_EntersCount++;
-        SaveEvent("ENTER");
+        // SaveEvent("ENTER");
+        addEventToQue("LEFT_TO_RIGHT");
         return true;
 
     } else if (colShift < -MIN_COL_SHIFT) {
@@ -431,7 +432,8 @@ bool EnterExitDetector_v2_wAvg() {
         log_print("Exit");
         extern int g_ExitsCount;
         g_ExitsCount++;
-        SaveEvent("EXIT");
+        // SaveEvent("EXIT");
+        addEventToQue("RIGHT_TO_LEFT");
         return true;
     }
 

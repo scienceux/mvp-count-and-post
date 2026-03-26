@@ -19,28 +19,107 @@ const char* API_URL = "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4
 // Full path to the current CSV file on SD card
 char g_csvPath[64] = {0};
 
+// If wifi, switchted to true
 bool g_wifiSetTime = false;
 
-static String UrlEncodeFormValue(const char* value) {
-    String encoded;
-    while (*value) {
-        const unsigned char ch = static_cast<unsigned char>(*value++);
-        if ((ch >= 'a' && ch <= 'z') ||
-            (ch >= 'A' && ch <= 'Z') ||
-            (ch >= '0' && ch <= '9') ||
-            ch == '-' || ch == '_' || ch == '.' || ch == '*') {
-            encoded += static_cast<char>(ch);
-        } else if (ch == ' ') {
-            encoded += '+';
-        } else {
-            char hex[4];
-            snprintf(hex, sizeof(hex), "%%%02X", ch);
-            encoded += hex;
-        }
+
+//============================================================
+// The QUE: new enter/exit events are saved to global array then logged/uploaded every X seconds to avoid blocking counts
+// create que
+// add event row to que
+// save to csv
+// upload to server
+// clear que
+// global array to hold the most recent CSV event rows
+String g_recentCSVRows[10] = {""};
+
+// clear que
+void ClearQue() {
+    for (int i = 0; i < 10; ++i) {
+        g_recentCSVRows[i] = "";
     }
-    return encoded;
 }
 
+// adds a new event row to the global array
+void queueCSVRowForSaving(const String& newRow) {
+    // Shift existing rows down
+    for (int i = 9; i > 0; --i) {
+        g_recentCSVRows[i] = g_recentCSVRows[i - 1];
+    }
+    // Add new row at the front
+    g_recentCSVRows[0] = newRow;
+}
+
+// Create CSV row from an event type (add time, etc.) and add to que
+void addEventToQue(const char* eventType) {
+    TimeExact t = WhatTimeIsItExactly();
+
+    char row[96];
+    snprintf(row, sizeof(row),
+        "%04d-%02d-%02d %02d:%02d:%02d,%s,%s,%s,%s",
+        t.year, t.month, t.day,
+        t.hour, t.minute, t.second,
+        kWeekdays[t.weekday],
+        eventType, DEVICE_ID,
+        g_wifiSetTime ? "timefromwifi" : "estimated");
+
+    queueCSVRowForSaving(String(row));
+}
+
+// Saves the queued events to the current CSV file on SD card
+bool SaveQueToCSV() {
+    if (g_csvPath[0] == '\0') {
+        log_print("CSV path not set, cannot save");
+        return false;
+    }
+
+    File f = SD.open(g_csvPath, FILE_APPEND);
+    if (!f) {
+        log_print("Failed to open CSV for appending");
+        return false;
+    }
+
+    for (const String& row : g_recentCSVRows) {
+        if (row.length() > 0) {
+            f.println(row);
+        }
+    }
+    f.close();
+    return true;
+
+}
+
+// Upload que to server
+bool UploadQueToServer() {
+    for (const String& row : g_recentCSVRows) {
+        if (row.length() > 0) {
+            if (!UploadEventToServer(row.c_str())) {
+                log_print("Failed to upload event: " + row);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Process que
+bool LogQuedEvents() {
+    if (!SaveQueToCSV()) {
+        log_print("Failed to save que to CSV");
+        return false;
+    }
+    if (!UploadQueToServer()) {
+        log_print("Failed to upload que to server");
+        return false;
+    }
+    ClearQue();
+    return true;
+}
+
+
+//============================================================
+
+// Old: Upload single event to google apps sheet
 bool UploadEventToServer(const char* row) {
     if (WiFi.status() != WL_CONNECTED) {
         log_print("Not connected to WiFi, cannot upload event");
@@ -80,6 +159,28 @@ bool UploadEventToServer(const char* row) {
     http.end();
     return httpCode == 200;
 }
+
+static String UrlEncodeFormValue(const char* value) {
+    String encoded;
+    while (*value) {
+        const unsigned char ch = static_cast<unsigned char>(*value++);
+        if ((ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '_' || ch == '.' || ch == '*') {
+            encoded += static_cast<char>(ch);
+        } else if (ch == ' ') {
+            encoded += '+';
+        } else {
+            char hex[4];
+            snprintf(hex, sizeof(hex), "%%%02X", ch);
+            encoded += hex;
+        }
+    }
+    return encoded;
+}
+
+
 
 
 // Reads the last data row of a CSV and sets the system RTC to that timestamp.

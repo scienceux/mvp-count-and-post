@@ -140,7 +140,7 @@ void setup() {
   AverageFrameCreate(15); // Average frames for first 15 seconds to create initial average frame
   turnOffLED();
 
-  CreateTimer("CheckWifi", 30.0f); // Check WiFi every 3000 seconds
+  CreateTimer("CheckWifi", 300.0f); // Check WiFi every 3000 seconds
   CreateTimer("PrintStats", 60.0f); // Print stats every 60 seconds
   CreateTimer("UploadData", 60.0f); // Upload data every 60 seconds
 
@@ -150,7 +150,7 @@ void setup() {
   NameTheCSVFile();
   CreateCSVFile();
 
-  SaveEvent("POWERED_ON");
+  addEventToQue("POWERED_ON");
 
   
 }
@@ -191,5 +191,13 @@ void loop() {
         wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS);
       }
       RestartTimer("CheckWifi");
+    }
+
+    if ( IsTimerElapsed("UploadData") ) {
+      log_print("UploadData timer elapsed: " + String(GetTimerCurrent("UploadData")));
+      if (!LogQuedEvents()) {
+        log_print("Failed to log qued events");
+      }
+      RestartTimer("UploadData");
     }
 }
