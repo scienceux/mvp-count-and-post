@@ -22,6 +22,9 @@ char g_csvPath[64] = {0};
 // If wifi, switchted to true
 bool g_wifiSetTime = false;
 
+// Weekday name lookup
+static const char* kWeekdays[] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+
 
 //============================================================
 // The QUE: new enter/exit events are saved to global array then logged/uploaded every X seconds to avoid blocking counts
@@ -89,37 +92,27 @@ bool SaveQueToCSV() {
 
 }
 
-// Upload que to server
-bool UploadQueToServer() {
-    for (const String& row : g_recentCSVRows) {
-        if (row.length() > 0) {
-            if (!UploadEventToServer(row.c_str())) {
-                log_print("Failed to upload event: " + row);
-                return false;
-            }
+static String UrlEncodeFormValue(const char* value) {
+    String encoded;
+    while (*value) {
+        const unsigned char ch = static_cast<unsigned char>(*value++);
+        if ((ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '_' || ch == '.' || ch == '*') {
+            encoded += static_cast<char>(ch);
+        } else if (ch == ' ') {
+            encoded += '+';
+        } else {
+            char hex[4];
+            snprintf(hex, sizeof(hex), "%%%02X", ch);
+            encoded += hex;
         }
     }
-    return true;
+    return encoded;
 }
 
-// Process que
-bool LogQuedEvents() {
-    if (!SaveQueToCSV()) {
-        log_print("Failed to save que to CSV");
-        return false;
-    }
-    if (!UploadQueToServer()) {
-        log_print("Failed to upload que to server");
-        return false;
-    }
-    ClearQue();
-    return true;
-}
-
-
-//============================================================
-
-// Old: Upload single event to google apps sheet
+// Upload single event to google apps sheet
 bool UploadEventToServer(const char* row) {
     if (WiFi.status() != WL_CONNECTED) {
         log_print("Not connected to WiFi, cannot upload event");
@@ -160,25 +153,99 @@ bool UploadEventToServer(const char* row) {
     return httpCode == 200;
 }
 
-static String UrlEncodeFormValue(const char* value) {
-    String encoded;
-    while (*value) {
-        const unsigned char ch = static_cast<unsigned char>(*value++);
-        if ((ch >= 'a' && ch <= 'z') ||
-            (ch >= 'A' && ch <= 'Z') ||
-            (ch >= '0' && ch <= '9') ||
-            ch == '-' || ch == '_' || ch == '.' || ch == '*') {
-            encoded += static_cast<char>(ch);
-        } else if (ch == ' ') {
-            encoded += '+';
-        } else {
-            char hex[4];
-            snprintf(hex, sizeof(hex), "%%%02X", ch);
-            encoded += hex;
+
+
+// Upload que to server
+bool UploadQueToServer() {
+    for (const String& row : g_recentCSVRows) {
+        if (row.length() > 0) {
+            if (!UploadEventToServer(row.c_str())) {
+                log_print("Failed to upload event: " + row);
+                return false;
+            }
         }
     }
-    return encoded;
+    return true;
 }
+
+// Called by main after timer
+// Process que
+bool LogQuedEvents() {
+    if (!SaveQueToCSV()) {
+        log_print("Failed to save que to CSV");
+        return false;
+    }
+    if (!UploadQueToServer()) {
+        log_print("Failed to upload que to server");
+        return false;
+    }
+    ClearQue();
+    return true;
+}
+
+
+//============================================================
+
+// // Old: Upload single event to google apps sheet
+// bool UploadEventToServer(const char* row) {
+//     if (WiFi.status() != WL_CONNECTED) {
+//         log_print("Not connected to WiFi, cannot upload event");
+//         return false;
+//     }
+
+//     const char* basename = strrchr(g_csvPath, '/');
+//     basename = basename ? basename + 1 : g_csvPath;
+
+//     String query = "eventId=" + UrlEncodeFormValue(EVENT_NAME) +
+//                    "&rows=" + UrlEncodeFormValue(row);
+//     String requestUrl = String(API_URL) + "?" + query;
+
+//     WiFiClientSecure client;
+//     client.setInsecure(); // Google certs change often; insecure is usually safer for IoT
+    
+//     HTTPClient http;
+    
+//     // Use query params with GET to avoid current POST path issues.
+//     http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+//     http.begin(client, requestUrl);
+//     http.addHeader("User-Agent", "PosterBuddyESP32");
+
+//     int httpCode = http.GET();
+
+//     String response = http.getString();
+    
+//     if (httpCode > 0) {
+//         log_print("HTTP Code: " + String(httpCode));
+//         // if (httpCode == 200) {
+//         //     log_print("Success: " + response);
+//         // }
+//     } else {
+//         log_print("Error: " + http.errorToString(httpCode));
+//     }
+
+//     http.end();
+//     return httpCode == 200;
+// }
+
+// static String UrlEncodeFormValue(const char* value) {
+//     String encoded;
+//     while (*value) {
+//         const unsigned char ch = static_cast<unsigned char>(*value++);
+//         if ((ch >= 'a' && ch <= 'z') ||
+//             (ch >= 'A' && ch <= 'Z') ||
+//             (ch >= '0' && ch <= '9') ||
+//             ch == '-' || ch == '_' || ch == '.' || ch == '*') {
+//             encoded += static_cast<char>(ch);
+//         } else if (ch == ' ') {
+//             encoded += '+';
+//         } else {
+//             char hex[4];
+//             snprintf(hex, sizeof(hex), "%%%02X", ch);
+//             encoded += hex;
+//         }
+//     }
+//     return encoded;
+// }
 
 
 
@@ -299,8 +366,6 @@ bool CreateCSVFile() {
     return true;
 }
 
-// Weekday name lookup
-static const char* kWeekdays[] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
 
 // Appends one timestamped event row to the CSV
 // eventType should be "ENTER" or "EXIT"

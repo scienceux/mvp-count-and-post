@@ -30,20 +30,19 @@
 const char* DEVICE_MODE = "ENTEREXIT"; 
 const int CAMERA_FPS = 4;
 
-// Video mode
-const char* VIDEO_SAVE_FOLDER = "/videos"; // SD card folder to save videos (for VIDEO_FOR_TRAINING mode)
-const float HOW_OFTEN_SAVE_VIDEO_FROM_JPG = 60.0f; // seconds - how often to save a new video file from JPG frames in VIDEO_FOR_TRAINING mode
-
-
 // Occupancy counting mode
 const float OCCUPANCY_EVERY_SECS = 30.0f;
 char global_csv_path[64] = "/occupancy.csv";
 
 
 // WiFi config (STA)
-const char* WIFI_SSID = "posterbuddyTR";
+// const char* WIFI_SSID = "posterbuddyTR";
+// const char* WIFI_USER = ""; // unused for WPA2-PSK
+// const char* WIFI_PASS = "money4connie";
+
+const char* WIFI_SSID = "SolisWiFi_usf";
 const char* WIFI_USER = ""; // unused for WPA2-PSK
-const char* WIFI_PASS = "money4connie";
+const char* WIFI_PASS = "47319451";
 //==================================================
 
 
@@ -66,10 +65,7 @@ void setup() {
   
   // What mode?
   //================================
-  if (strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0) {
-    CreateTimer("SaveMJpeg", HOW_OFTEN_SAVE_VIDEO_FROM_JPG);
-
-  } else if (strcmp(DEVICE_MODE, "OCCUPANCY") == 0) {
+  if (strcmp(DEVICE_MODE, "OCCUPANCY") == 0) {
     CreateTimer("OccupancyEverySecs", OCCUPANCY_EVERY_SECS);
 
   } else if (strcmp(DEVICE_MODE, "ENTEREXIT") == 0) {
@@ -179,12 +175,6 @@ void loop() {
 
     EnterExitDetector_v2_wAvg();
 
-
-    // if ( IsTimerElapsed("PrintStats") ) {
-    //   log_print("Free heap: " + String(ESP.getFreeHeap()));
-    //   RestartTimer("PrintStats");
-    // }
-
     if ( IsTimerElapsed("CheckWifi") ) {
       if (WiFi.status() != WL_CONNECTED) {
         log_print("WiFi disconnected, attempting reconnect...");
@@ -197,6 +187,8 @@ void loop() {
       log_print("UploadData timer elapsed: " + String(GetTimerCurrent("UploadData")));
       if (!LogQuedEvents()) {
         log_print("Failed to log qued events");
+      } else {
+        log_print("Qued events logged successfully");
       }
       RestartTimer("UploadData");
     }

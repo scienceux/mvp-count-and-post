@@ -7,3 +7,7 @@ extern bool g_wifiSetTime; // true = time was NTP-synced, false = estimated from
 void NameTheCSVFile();
 bool CreateCSVFile();
 bool SaveEvent(const char* eventType);
+
+// Que for events waiting to be saved/uploaded
+void addEventToQue(const char* eventType);
+bool LogQuedEvents();
