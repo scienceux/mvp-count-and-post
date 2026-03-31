@@ -49,19 +49,19 @@ int wifi_scan_for_network(const char* ssid)
   return -998; // Network not found
 }
 
-bool wifi_connect(const char* ssid, const char* user, const char* pass, const char* hostname)
+bool wifi_connect(const String& ssid, const String& user, const String& pass, const char* hostname)
 {
   (void)user;
 
-  if (!ssid || !pass) {
+  if (ssid.length() == 0 || pass.length() == 0) {
     Serial.println("WiFi ERROR: SSID or password is null");
     return false;
   }
 
-  Serial.printf("WiFi: Attempting to connect to '%s'...\n", ssid);
+  Serial.printf("WiFi: Attempting to connect to '%s'...\n", ssid.c_str());
 
   // First, scan to see if the network is available
-  int signalStrength = wifi_scan_for_network(ssid);
+  int signalStrength = wifi_scan_for_network(ssid.c_str());
   
   if (signalStrength == -999) {
     Serial.println("WiFi ERROR: No networks detected - check antenna or move closer to router");

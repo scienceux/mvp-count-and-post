@@ -1,6 +1,5 @@
 #pragma once
-
-extern const char* DEVICE_ID;
+// DEVICE_ID and EVENT_NAME are macros defined in data_save.cpp via g_deviceName/g_eventName
 extern char g_csvPath[64];
 extern bool g_wifiSetTime; // true = time was NTP-synced, false = estimated from CSV
 

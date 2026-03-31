@@ -1,17 +1,73 @@
 #include "config.h"
 #include <Preferences.h>
+#include <SD.h>
+#include "utilities_debug.h"
 
 static Preferences prefs;
 static bool prefsInitialized = false;
 
 // Cached config values (loaded once at init)
-static String g_deviceName = "";
-static String g_deviceMode = "";
-static String g_eventName = "";
-static String g_wifiSsid = "";
-static String g_wifiPass = "";
+String g_deviceName = "";
+String g_deviceMode = "ENTEREXIT";
+String g_eventName = "MIKETESTING";
+String g_wifiSsid = "";
+String g_wifiUser = "";  // unused for WPA2-PSK, but keep for potential future use
+String g_wifiPass = "";
 
 static const char* MODEL = "XIAO ESP32S3";
+
+
+// DEFAULT Config (if not set by SD config.txt)
+//==================================================
+// ---- adjust these as needed ----
+// ENTEREXIT, OCCUPANCY, VIDEO_FOR_TRAINING (for training)
+const char* DEVICE_MODE = "ENTEREXIT"; 
+const int CAMERA_FPS = 4;
+
+
+// Set from SD now. These are old hardcoded defaults
+// WiFi config (STA)
+// const char* WIFI_SSID = "posterbuddyTR";
+// const char* WIFI_USER = ""; // unused for WPA2-PSK
+// const char* WIFI_PASS = "money4connie";
+
+// const char* WIFI_SSID = "SolisWiFi_usf";
+// const char* WIFI_USER = ""; // unused for WPA2-PSK
+// const char* WIFI_PASS = "47319451";
+//==================================================
+
+
+// Pull global config vars from SD card
+void setConfigFromSD() 
+{
+    // Format is like:
+    // device_name_from_sd=hallway
+    // wifi_ssid_from_sd=easl2026
+    // wifi_pass_from_sd=thepassword
+    // Read this to replace hardcoded config values above, e.g. DEVICE_MODE, WIFI_SSID, etc.    
+
+    if (SD.exists("/config.txt")) {
+        File configFile = SD.open("/config.txt");
+        if (configFile) {
+            while (configFile.available()) {
+                String line = configFile.readStringUntil('\n');
+                line.trim();
+                if (line.startsWith("device_name_from_sd=")) {
+                g_deviceName = line.substring(20);
+                } else if (line.startsWith("wifi_ssid_from_sd=")) {
+                g_wifiSsid = line.substring(18);
+                } else if (line.startsWith("wifi_pass_from_sd=")) {
+                g_wifiPass = line.substring(18);
+                }
+            }
+            configFile.close();
+        }
+    } else {
+        // No config on SD, keep using hardcoded defaults
+        g_deviceName = "unnamed_device";
+        log_print("Needs a config.txt on SD card with device_name_from_sd=, wifi_ssid_from_sd=, and wifi_pass_from_sd= values");
+    }
+}
 
 void ConfigInit()
 {

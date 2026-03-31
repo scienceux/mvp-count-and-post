@@ -6,14 +6,16 @@
 #include "WiFi.h"
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include "config.h"
 
 
 // CSV name format (WiFi on):  /logs/2026-03-17_1602_device01.csv
 // CSV name format (no WiFi):  /logs/After-2026-03-17_1602_device01.csv
 
-// Device ID — replace later with value read from flash/preferences
-const char* DEVICE_ID = "living-room";
-const char* EVENT_NAME = "EASL2026";
+// Device ID and event name — read from global config at point of use via .c_str()
+// Do NOT cache .c_str() at startup; String internal buffer may move after SD load
+#define DEVICE_ID (g_deviceName.c_str())
+#define EVENT_NAME (g_eventName.c_str())
 const char* API_URL = "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4da9DU8ci3qPRs9zRLqpAAVbiCkEpDq82b6GQKW-QwOY3Z-Erg/exec";
 
 // Full path to the current CSV file on SD card

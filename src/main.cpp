@@ -23,30 +23,6 @@
 // #endif
 
 
-// CONFIG
-//==================================================
-// ---- adjust these as needed ----
-// ENTEREXIT, OCCUPANCY, VIDEO_FOR_TRAINING (for training)
-const char* DEVICE_MODE = "ENTEREXIT"; 
-const int CAMERA_FPS = 4;
-
-// Occupancy counting mode
-const float OCCUPANCY_EVERY_SECS = 30.0f;
-char global_csv_path[64] = "/occupancy.csv";
-
-
-// WiFi config (STA)
-// const char* WIFI_SSID = "posterbuddyTR";
-// const char* WIFI_USER = ""; // unused for WPA2-PSK
-// const char* WIFI_PASS = "money4connie";
-
-const char* WIFI_SSID = "SolisWiFi_usf";
-const char* WIFI_USER = ""; // unused for WPA2-PSK
-const char* WIFI_PASS = "47319451";
-//==================================================
-
-
-
 // Track most recent occupancy result so we can skip baseline updates when occupied.
 static int g_lastOccupancyCount = 0;
 
@@ -60,19 +36,6 @@ void setup() {
   delay(5000);
 
   log_print(psramFound() ? "PSRAM: OK" : "PSRAM: NOT FOUND - camera may crash");
-
-  log_print(DEVICE_MODE);
-  
-  // What mode?
-  //================================
-  if (strcmp(DEVICE_MODE, "OCCUPANCY") == 0) {
-    CreateTimer("OccupancyEverySecs", OCCUPANCY_EVERY_SECS);
-
-  } else if (strcmp(DEVICE_MODE, "ENTEREXIT") == 0) {
-    log_print("ENTEREXIT mode ");
-  } else {
-    log_print(String("Unknown DEVICE_MODE: ") + DEVICE_MODE);
-  }
 
   bool ledOk = setupLED();
   if (ledOk) {
@@ -95,9 +58,14 @@ void setup() {
     }
   }
 
+  // Set global variables from SD's config.txt
+  setConfigFromSD();
+
+
+
   // WiFi and clock are set up BEFORE the camera so that WiFi channel scanning
   // does not cause VSYNC overflow in the camera DMA pipeline (cam_task stack overflow).
-  bool wifiOk = wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS, DEVICE_ID);
+  bool wifiOk = wifi_connect(g_wifiSsid, g_wifiUser, g_wifiPass, g_deviceName.c_str());
   if (wifiOk) {
     log_print("WiFi connected.");
     turn_on_remote_serial_monitoring();
@@ -106,7 +74,7 @@ void setup() {
     log_print("WiFi connection failed.");
   }
 
-  bool clockOk = setupClock(WIFI_SSID, WIFI_USER, WIFI_PASS);
+  bool clockOk = setupClock(g_wifiSsid.c_str(), g_wifiUser.c_str(), g_wifiPass.c_str());
   if (clockOk) {
     g_wifiSetTime = true;   // ← add this
     log_print("Clock synced.");
@@ -117,7 +85,7 @@ void setup() {
     log_print("Clock sync failed.");
   }
 
-  bool cameraOk = CameraSetup(CAMERA_FPS, DEVICE_MODE);
+  bool cameraOk = CameraSetup(CAMERA_FPS, g_deviceMode.c_str());
   if (cameraOk) {
     log_print("Camera setup successful.");
     blinkLED(3, "fast");
@@ -178,7 +146,7 @@ void loop() {
     if ( IsTimerElapsed("CheckWifi") ) {
       if (WiFi.status() != WL_CONNECTED) {
         log_print("WiFi disconnected, attempting reconnect...");
-        wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS);
+        wifi_connect(g_wifiSsid, g_wifiUser, g_wifiPass);
       }
       RestartTimer("CheckWifi");
     }
