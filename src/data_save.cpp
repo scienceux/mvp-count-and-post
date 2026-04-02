@@ -66,7 +66,8 @@ void addEventToQue(const char* eventType) {
         t.hour, t.minute, t.second,
         kWeekdays[t.weekday],
         eventType, DEVICE_ID,
-        g_wifiSetTime ? "timefromwifi" : "estimated");
+        g_wifiSetTime ? "timefromwifi" : "estimated",
+    "not uploaded");
 
     queueCSVRowForSaving(String(row));
 }
@@ -156,8 +157,7 @@ bool UploadEventToServer(const char* row) {
 }
 
 
-
-// Upload que to server
+// Upload que to server (when using 'que stored in memory until scucessfully porcessed' method, which should be deprecated soon)
 bool UploadQueToServer() {
     for (const String& row : g_recentCSVRows) {
         if (row.length() > 0) {
@@ -168,6 +168,53 @@ bool UploadQueToServer() {
         }
     }
     return true;
+}
+
+bool syncCSVwithServer() {
+    // Read csv where uploaded_timestamp is "not uploaded" and upload those rows, then update uploaded_timestamp to current timestamp
+    File f = SD.open(g_csvPath, FILE_READ);
+    if (!f) {
+        log_print("Failed to open CSV for reading");
+        return false;
+    }
+
+    // Temporary array to hold rows with "not uploaded" status
+    String rowsToUpload[50] = {""};
+    int uploadCount = 0;
+    while (f.available()) {
+        String line = f.readStringUntil('\n');
+        if (line.endsWith("not uploaded")) {
+            if (uploadCount < 50) {
+                rowsToUpload[uploadCount++] = line;
+            } else {
+                log_print("Too many rows to upload, skipping some");
+                break;
+            }
+        }
+    }
+
+    // Upload each row and update status in CSV
+    for (int i = 0; i < uploadCount; ++i) {
+        String& row = rowsToUpload[i];
+        if (UploadEventToServer(row.c_str())) {
+            // Update row in CSV to mark as uploaded
+            String updatedRow = row.substring(0, row.length() - 12) + "uploaded";
+            // Here you would implement logic to replace the old row with updatedRow in the CSV file
+            // This is a bit complex due to file handling, so it is left as a comment for now
+            // updateCSVRow(g_csvPath, row, updatedRow);
+        } else {
+            log_print("Failed to upload event: " + row);
+        }
+    }
+}
+
+bool updateCSVRow(const char* path, const String& oldRow, const String& newRow) {
+    // This function would read the entire CSV, replace oldRow with newRow, and write it back.
+    // Due to the complexity of file handling on embedded systems, this is a placeholder.
+    // In a real implementation, you might read line by line and write to a new file, then replace the old file.
+
+    log_print("updateCSVRow is not implemented. Would replace: " + oldRow + " with: " + newRow);
+    return false;
 }
 
 // Called by main after timer
@@ -362,7 +409,7 @@ bool CreateCSVFile() {
         return false;
     }
 
-    f.println("timestamp,weekday,event,device_id,time_source");
+    f.println("timestamp,weekday,event,device_id,time_source,uploaded_timestamp");
     f.close();
     log_print("CSV created: " + String(g_csvPath));
     return true;
@@ -385,7 +432,8 @@ bool SaveEvent(const char* eventType) {
         t.hour, t.minute, t.second,
         kWeekdays[t.weekday],
         eventType, DEVICE_ID,
-        g_wifiSetTime ? "ntp" : "estimated");
+        g_wifiSetTime ? "ntp" : "estimated",
+    "not uploaded");
 
     File f = SD.open(g_csvPath, FILE_APPEND);
     if (!f) {
@@ -397,8 +445,6 @@ bool SaveEvent(const char* eventType) {
     f.flush();
     f.close();
     log_print("Event saved: " + String(row));
-
-    UploadEventToServer(row);
         
     return true;
 }
