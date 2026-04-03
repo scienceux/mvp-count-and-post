@@ -363,9 +363,13 @@ void NameTheCSVFile() {
     TimeExact t = WhatTimeIsItExactly();
 
     if (t.valid) {
+        // snprintf(g_csvPath, sizeof(g_csvPath),
+        //     "/logs/%04d-%02d-%02d_%02d%02d_%s.csv",
+        //     t.year, t.month, t.day, t.hour, t.minute, DEVICE_ID); // e.g. /logs/2026-03-17_1602_device01.csv
         snprintf(g_csvPath, sizeof(g_csvPath),
-            "/logs/%04d-%02d-%02d_%02d%02d_%s.csv",
-            t.year, t.month, t.day, t.hour, t.minute, DEVICE_ID); // e.g. /logs/2026-03-17_1602_device01.csv
+            "/logs/%s-%s.csv",
+            g_eventName, g_deviceName); // e.g. /logs/2026-03-17_1602_device01.csv        
+            
     } else {
         char refName[64] = {0};
         if (FindLastCSVName(refName, sizeof(refName))) {
