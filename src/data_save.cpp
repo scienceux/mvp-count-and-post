@@ -20,6 +20,8 @@ const char* API_URL = "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4
 
 // Full path to the current CSV file on SD card
 char g_csvPath[64] = {0};
+// Staging path for events not yet uploaded to server
+char g_queuePath[96] = {0};
 
 // If wifi, switchted to true
 bool g_wifiSetTime = false;
@@ -72,16 +74,23 @@ void addEventToQue(const char* eventType) {
     queueCSVRowForSaving(String(row));
 }
 
-// Saves the queued events to the current CSV file on SD card
-bool SaveQueToCSV() {
-    if (g_csvPath[0] == '\0') {
-        log_print("CSV path not set, cannot save");
+// Flushes in-memory queue to the queue CSV on SD, then clears in-memory queue.
+// Always called regardless of WiFi status — ensures data survives a reboot.
+static bool FlushQueToQueueCSV() {
+    if (g_queuePath[0] == '\0') {
+        log_print("Queue path not set, cannot flush");
         return false;
     }
 
-    File f = SD.open(g_csvPath, FILE_APPEND);
+    bool hasRows = false;
+    for (const String& row : g_recentCSVRows) {
+        if (row.length() > 0) { hasRows = true; break; }
+    }
+    if (!hasRows) return true;
+
+    File f = SD.open(g_queuePath, FILE_APPEND);
     if (!f) {
-        log_print("Failed to open CSV for appending");
+        log_print("Failed to open queue CSV for appending");
         return false;
     }
 
@@ -91,8 +100,8 @@ bool SaveQueToCSV() {
         }
     }
     f.close();
+    ClearQue();
     return true;
-
 }
 
 static String UrlEncodeFormValue(const char* value) {
@@ -157,144 +166,128 @@ bool UploadEventToServer(const char* row) {
 }
 
 
-// Upload que to server (when using 'que stored in memory until scucessfully porcessed' method, which should be deprecated soon)
-bool UploadQueToServer() {
-    for (const String& row : g_recentCSVRows) {
-        if (row.length() > 0) {
-            if (!UploadEventToServer(row.c_str())) {
-                log_print("Failed to upload event: " + row);
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-bool syncCSVwithServer() {
-    // Read csv where uploaded_timestamp is "not uploaded" and upload those rows, then update uploaded_timestamp to current timestamp
-    File f = SD.open(g_csvPath, FILE_READ);
-    if (!f) {
-        log_print("Failed to open CSV for reading");
+// Reads queue CSV, uploads each row to server, on full success moves rows to uploaded CSV and clears queue CSV.
+// Stops on first upload failure and leaves queue CSV intact for retry next cycle.
+static bool UploadQueueCSVToServer() {
+    if (WiFi.status() != WL_CONNECTED) {
+        log_print("No WiFi, skipping upload");
         return false;
     }
 
-    // Temporary array to hold rows with "not uploaded" status
-    String rowsToUpload[50] = {""};
-    int uploadCount = 0;
-    while (f.available()) {
-        String line = f.readStringUntil('\n');
-        if (line.endsWith("not uploaded")) {
-            if (uploadCount < 50) {
-                rowsToUpload[uploadCount++] = line;
+    if (!SD.exists(g_queuePath)) {
+        return true; // Nothing pending
+    }
+
+    // Read up to 100 rows from queue CSV into memory
+    String rows[100];
+    int count = 0;
+    bool allRead = true;
+    {
+        File f = SD.open(g_queuePath, FILE_READ);
+        if (!f) {
+            log_print("Failed to open queue CSV for reading");
+            return false;
+        }
+        while (f.available()) {
+            String line = f.readStringUntil('\n');
+            line.trim();
+            if (line.length() == 0) continue;
+            if (count < 100) {
+                rows[count++] = line;
             } else {
-                log_print("Too many rows to upload, skipping some");
+                allRead = false;
                 break;
             }
         }
+        f.close();
     }
 
-    // Upload each row and update status in CSV
-    for (int i = 0; i < uploadCount; ++i) {
-        String& row = rowsToUpload[i];
-        if (UploadEventToServer(row.c_str())) {
-            // Update row in CSV to mark as uploaded
-            String updatedRow = row.substring(0, row.length() - 12) + "uploaded";
-            // Here you would implement logic to replace the old row with updatedRow in the CSV file
-            // This is a bit complex due to file handling, so it is left as a comment for now
-            // updateCSVRow(g_csvPath, row, updatedRow);
-        } else {
-            log_print("Failed to upload event: " + row);
+    if (count == 0) {
+        if (allRead) SD.remove(g_queuePath); // empty file cleanup
+        return true;
+    }
+
+    // Upload row by row; on failure leave queue CSV intact for retry
+    for (int i = 0; i < count; ++i) {
+        if (!UploadEventToServer(rows[i].c_str())) {
+            log_print("Upload failed at row " + String(i) + ", retrying next cycle");
+            return false;
         }
     }
-}
 
-bool updateCSVRow(const char* path, const String& oldRow, const String& newRow) {
-    // This function would read the entire CSV, replace oldRow with newRow, and write it back.
-    // Due to the complexity of file handling on embedded systems, this is a placeholder.
-    // In a real implementation, you might read line by line and write to a new file, then replace the old file.
-
-    log_print("updateCSVRow is not implemented. Would replace: " + oldRow + " with: " + newRow);
-    return false;
-}
-
-// Called by main after timer
-// Process que
-bool LogQuedEvents() {
-    if (!SaveQueToCSV()) {
-        log_print("Failed to save que to CSV");
-        return false;
+    // All uploaded — append to permanent uploaded CSV, marking rows as uploaded
+    {
+        File f = SD.open(g_csvPath, FILE_APPEND);
+        if (f) {
+            for (int i = 0; i < count; ++i) {
+                String row = rows[i];
+                // Replace trailing "not uploaded" with "uploaded"
+                if (row.endsWith("not uploaded")) {
+                    row = row.substring(0, row.length() - 12) + "uploaded";
+                }
+                f.println(row);
+            }
+            f.close();
+        } else {
+            log_print("Could not open uploaded CSV; rows may re-upload next cycle");
+        }
     }
-    if (!UploadQueToServer()) {
-        log_print("Failed to upload que to server");
-        return false;
+
+    // Remove processed rows from queue CSV
+    if (allRead) {
+        SD.remove(g_queuePath);
+        log_print("Queue cleared. " + String(count) + " rows moved to uploaded CSV");
+    } else {
+        // More rows remain — rewrite queue CSV without the processed rows
+        log_print("Queue >100 rows; rewriting remainder after uploading " + String(count));
+        const char* tmpPath = "/logs/qtmp.csv";
+        {
+            File src = SD.open(g_queuePath, FILE_READ);
+            File dst = SD.open(tmpPath, FILE_WRITE);
+            if (src && dst) {
+                int skip = count;
+                while (src.available()) {
+                    String line = src.readStringUntil('\n');
+                    if (skip > 0) { --skip; continue; }
+                    line.trim();
+                    if (line.length() > 0) dst.println(line);
+                }
+            }
+            if (src) src.close();
+            if (dst) dst.close();
+        }
+        SD.remove(g_queuePath);
+        {
+            File src = SD.open(tmpPath, FILE_READ);
+            File dst = SD.open(g_queuePath, FILE_WRITE);
+            if (src && dst) {
+                uint8_t buf[128];
+                size_t br;
+                while ((br = src.read(buf, sizeof(buf))) > 0) dst.write(buf, br);
+            }
+            if (src) src.close();
+            if (dst) dst.close();
+        }
+        SD.remove(tmpPath);
     }
-    ClearQue();
+
     return true;
 }
 
+// Called by main on UploadData timer.
+// Phase 1 (always): flush in-memory queue to queue CSV on SD, then clear in-memory queue.
+// Phase 2 (WiFi only): upload queue CSV to server; on success move rows to uploaded CSV and clear queue CSV.
+bool LogQuedEvents() {
+    FlushQueToQueueCSV();
 
-//============================================================
+    if (WiFi.status() != WL_CONNECTED) {
+        log_print("No WiFi — queue saved to SD, upload deferred");
+        return false;
+    }
 
-// // Old: Upload single event to google apps sheet
-// bool UploadEventToServer(const char* row) {
-//     if (WiFi.status() != WL_CONNECTED) {
-//         log_print("Not connected to WiFi, cannot upload event");
-//         return false;
-//     }
+    return UploadQueueCSVToServer();
+}
 
-//     const char* basename = strrchr(g_csvPath, '/');
-//     basename = basename ? basename + 1 : g_csvPath;
-
-//     String query = "eventId=" + UrlEncodeFormValue(EVENT_NAME) +
-//                    "&rows=" + UrlEncodeFormValue(row);
-//     String requestUrl = String(API_URL) + "?" + query;
-
-//     WiFiClientSecure client;
-//     client.setInsecure(); // Google certs change often; insecure is usually safer for IoT
-    
-//     HTTPClient http;
-    
-//     // Use query params with GET to avoid current POST path issues.
-//     http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-//     http.begin(client, requestUrl);
-//     http.addHeader("User-Agent", "PosterBuddyESP32");
-
-//     int httpCode = http.GET();
-
-//     String response = http.getString();
-    
-//     if (httpCode > 0) {
-//         log_print("HTTP Code: " + String(httpCode));
-//         // if (httpCode == 200) {
-//         //     log_print("Success: " + response);
-//         // }
-//     } else {
-//         log_print("Error: " + http.errorToString(httpCode));
-//     }
-
-//     http.end();
-//     return httpCode == 200;
-// }
-
-// static String UrlEncodeFormValue(const char* value) {
-//     String encoded;
-//     while (*value) {
-//         const unsigned char ch = static_cast<unsigned char>(*value++);
-//         if ((ch >= 'a' && ch <= 'z') ||
-//             (ch >= 'A' && ch <= 'Z') ||
-//             (ch >= '0' && ch <= '9') ||
-//             ch == '-' || ch == '_' || ch == '.' || ch == '*') {
-//             encoded += static_cast<char>(ch);
-//         } else if (ch == ' ') {
-//             encoded += '+';
-//         } else {
-//             char hex[4];
-//             snprintf(hex, sizeof(hex), "%%%02X", ch);
-//             encoded += hex;
-//         }
-//     }
-//     return encoded;
-// }
 
 
 
@@ -344,8 +337,9 @@ static bool FindLastCSVName(char* outName, size_t outSize) {
         bool isCsv    = (len > 4 && strcasecmp(name + len - 4, ".csv") == 0);
         bool isAfter  = (strncmp(name, "After-",  6) == 0);
         bool isNotime = (strncmp(name, "notime-", 7) == 0);
+        bool isQueue  = (strstr(name, "-queue-not_uploaded_yet") != nullptr);
 
-        if (isCsv && !isAfter && !isNotime && strcmp(name, best) > 0) {
+        if (isCsv && !isAfter && !isNotime && !isQueue && strcmp(name, best) > 0) {
             strlcpy(best, name, sizeof(best));
         }
         entry.close();
@@ -361,6 +355,11 @@ static bool FindLastCSVName(char* outName, size_t outSize) {
 // Falls back to "After-<last-csv-name>" when RTC is not NTP-synced (no WiFi).
 void NameTheCSVFile() {
     TimeExact t = WhatTimeIsItExactly();
+
+    // Queue path is always fixed regardless of clock state
+    snprintf(g_queuePath, sizeof(g_queuePath),
+        "/logs/%s-%s-queue-not_uploaded_yet.csv",
+        g_eventName, g_deviceName);
 
     if (t.valid) {
         // snprintf(g_csvPath, sizeof(g_csvPath),
@@ -416,40 +415,6 @@ bool CreateCSVFile() {
     f.println("timestamp,weekday,event,device_id,time_source,uploaded_timestamp");
     f.close();
     log_print("CSV created: " + String(g_csvPath));
-    return true;
-}
-
-
-// Appends one timestamped event row to the CSV
-// eventType should be "ENTER" or "EXIT"
-bool SaveEvent(const char* eventType) {
-    if (g_csvPath[0] == '\0' || !SD.exists(g_csvPath)) {
-        if (!CreateCSVFile()) return false;
-    }
-
-    TimeExact t = WhatTimeIsItExactly();
-
-    char row[96];
-    snprintf(row, sizeof(row),
-        "%04d-%02d-%02d %02d:%02d:%02d,%s,%s,%s,%s",
-        t.year, t.month, t.day,
-        t.hour, t.minute, t.second,
-        kWeekdays[t.weekday],
-        eventType, DEVICE_ID,
-        g_wifiSetTime ? "ntp" : "estimated",
-    "not uploaded");
-
-    File f = SD.open(g_csvPath, FILE_APPEND);
-    if (!f) {
-        log_print("SaveEvent: failed to open CSV");
-        return false;
-    }
-
-    f.println(row);
-    f.flush();
-    f.close();
-    log_print("Event saved: " + String(row));
-        
     return true;
 }
 
