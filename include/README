@@ -1,3 +1,11 @@
+#===========================================
+SETUP: Add a config.txt to your SD card
+#===========================================
+device_name_from_sd=hallway
+wifi_ssid_from_sd=YourNetworkName
+wifi_pass_from_sd=YourPassword
+
+
 How does counting algorithm work?
 
 - stores buffer of 5 frames but esp can't 'push' a new value onto an array, 
