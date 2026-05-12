@@ -116,7 +116,7 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     config.pin_pwdn     = PWDN_GPIO_NUM;
     config.pin_reset    = RESET_GPIO_NUM;
 
-    config.xclk_freq_hz = 10000000; // 10MHz (down from 20MHz) reduces frame rate from sensor, preventing DMA VSYNC overflow on startup
+    config.xclk_freq_hz = 20000000;
 
     // Grayscale for counting, or JPEG for training data?
     config.pixel_format = (camMode == MODE_JPEG) ? PIXFORMAT_JPEG : PIXFORMAT_GRAYSCALE;
@@ -127,14 +127,6 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
         return false;
-    }
-
-    // Flush any frames the sensor produced during init before the DMA was ready.
-    // Without this, the frame buffer fills immediately and cam_task overflows on slow/marginal hardware.
-    delay(100);
-    for (int i = 0; i < 5; i++) {
-        camera_fb_t* fb = esp_camera_fb_get();
-        if (fb) esp_camera_fb_return(fb);
     }
 
     sensor_t* sensor = esp_camera_sensor_get();

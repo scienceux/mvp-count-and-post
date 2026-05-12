@@ -330,11 +330,10 @@ bool BuildGridDiffDebugImageJpg(uint8_t** jpgBufOut, size_t* jpgLenOut) {
 // is a reasonable motion signal.
 static const uint32_t SPIKE_THRESHOLD           = 1500;  // normalized diff sum per quadrant to count as spiking
 static const uint8_t  MIN_SPIKING_QUADRANTS     = 2;     // need at least this many spiking quadrants in a frame to consider it "motion"
-static const uint32_t COOLDOWN_MS               = 2000;   // ignore new events for this long after a detection
+static const uint32_t COOLDOWN_MS               = 800;   // ignore new events for this long after a detection
 static const uint32_t MAX_HISTORY_AGE_MS        = 2000;  // discard history entries older than this (guards against stalls from SD writes, avg frame recompute, etc.)
 
 // -- Grid history ring buffer --
-// A ring buffer overwrites oldest frame (like 1,2,3 then 4,2,3 then 4,5,3) but saves a head pointer so it knows which one is the oldest. This is more memory-efficient than shifting all entries on every new frame.
 static const uint8_t  HISTORY_LEN               = 5;     // number of frames of history to keep (~1.25s at 4fps)
 
 static float    g_centerColHistory[HISTORY_LEN];
@@ -416,11 +415,10 @@ bool EnterExitDetector_v2_wAvg() {
         g_historyCount = 0;
         g_historyHead  = 0;
 
-        log_print("LEFT_TO_RIGHT");
+        log_print("Enter");
         extern int g_EntersCount;
         g_EntersCount++;
-        // SaveEvent("ENTER");
-        addEventToQue("LEFT_TO_RIGHT");
+        SaveEvent("ENTER");
         return true;
 
     } else if (colShift < -MIN_COL_SHIFT) {
@@ -430,11 +428,10 @@ bool EnterExitDetector_v2_wAvg() {
         g_historyCount = 0;
         g_historyHead  = 0;
 
-        log_print("RIGHT_TO_LEFT");
+        log_print("Exit");
         extern int g_ExitsCount;
         g_ExitsCount++;
-        // SaveEvent("EXIT");
-        addEventToQue("RIGHT_TO_LEFT");
+        SaveEvent("EXIT");
         return true;
     }
 

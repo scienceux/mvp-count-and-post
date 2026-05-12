@@ -1,0 +1,28 @@
+camera:
+  source: "usb"
+  device_index: 0
+  width: 640
+  height: 480
+  fps: 5
+
+detection:
+  model_name: "yolov8s.pt"    # yolov8s for better accuracy (speed doesn't matter here)
+  model_path: "models/yolov8s_ncnn_model"
+  confidence: 0.4
+
+# region of interest -- fractions of frame (0.0-1.0)
+# only people inside this box are counted, filters out passersby
+roi:
+  x1: 0.0
+  y1: 0.0
+  x2: 0.85
+  y2: 1.0
+
+interval: 30              # seconds between snapshots
+
+logging:
+  csv_dir: "logs"
+  device_id: "row-A"
+
+display:
+  show: false

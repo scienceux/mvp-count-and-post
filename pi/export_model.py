@@ -1,32 +1,43 @@
-"""Download YOLOv8n and export to NCNN. Run on dev machine, copy models/ to Pi."""
+"""Download a YOLOv8 model and export to NCNN. Run on dev machine, copy models/ to Pi."""
 
+import argparse
 from pathlib import Path
 
 import yaml
 from ultralytics import YOLO
 
-MODEL = "yolov8n.pt"
+DEFAULT_CFG = Path(__file__).parent / "config.yaml"
 OUT = Path(__file__).parent / "models"
-CFG = Path(__file__).parent / "config.yaml"
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=str(DEFAULT_CFG), help="config file to read model settings from")
+    args = parser.parse_args()
+
     OUT.mkdir(parents=True, exist_ok=True)
 
+    model_name = "yolov8n.pt"
     imgsz = 640
-    if CFG.exists():
-        with open(CFG) as f:
-            c = yaml.safe_load(f)
-        imgsz = c.get("detection", {}).get("input_size", 640)
 
-    print(f"downloading {MODEL}...")
-    model = YOLO(MODEL)
+    cfg_path = Path(args.config)
+    if cfg_path.exists():
+        with open(cfg_path) as f:
+            c = yaml.safe_load(f)
+        det = c.get("detection", {})
+        model_name = det.get("model_name", model_name)
+        imgsz = det.get("input_size", imgsz)
+
+    stem = model_name.replace(".pt", "")
+
+    print(f"downloading {model_name}...")
+    model = YOLO(model_name)
 
     print(f"exporting to ncnn (imgsz={imgsz})...")
     model.export(format="ncnn", imgsz=imgsz)
 
-    src = Path(MODEL.replace(".pt", "_ncnn_model"))
-    dst = OUT / "yolov8n_ncnn_model"
+    src = Path(f"{stem}_ncnn_model")
+    dst = OUT / f"{stem}_ncnn_model"
 
     if src.exists():
         if dst.exists():
@@ -38,7 +49,7 @@ def main():
         print(f"warning: {src} not found, check export output")
         return
 
-    pt = Path(MODEL)
+    pt = Path(model_name)
     if pt.exists():
         pt.unlink()
 

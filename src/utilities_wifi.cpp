@@ -1,7 +1,6 @@
 #include "utilities_wifi.h"
 #include <Arduino.h>
 #include <WiFi.h>
-#include <ESPmDNS.h>
 
 // Helper function to convert WiFi status to descriptive text
 const char* wifi_status_to_string(wl_status_t status)
@@ -49,19 +48,19 @@ int wifi_scan_for_network(const char* ssid)
   return -998; // Network not found
 }
 
-bool wifi_connect(const String& ssid, const String& user, const String& pass, const char* hostname)
+bool wifi_connect(const char* ssid, const char* user, const char* pass)
 {
   (void)user;
 
-  if (ssid.length() == 0 || pass.length() == 0) {
+  if (!ssid || !pass) {
     Serial.println("WiFi ERROR: SSID or password is null");
     return false;
   }
 
-  Serial.printf("WiFi: Attempting to connect to '%s'...\n", ssid.c_str());
+  Serial.printf("WiFi: Attempting to connect to '%s'...\n", ssid);
 
   // First, scan to see if the network is available
-  int signalStrength = wifi_scan_for_network(ssid.c_str());
+  int signalStrength = wifi_scan_for_network(ssid);
   
   if (signalStrength == -999) {
     Serial.println("WiFi ERROR: No networks detected - check antenna or move closer to router");
@@ -110,11 +109,6 @@ bool wifi_connect(const String& ssid, const String& user, const String& pass, co
     Serial.printf("  Signal strength: %ddBm\n", WiFi.RSSI());
     Serial.printf("  Gateway: %s\n", WiFi.gatewayIP().toString().c_str());
     Serial.printf("  DNS: %s\n", WiFi.dnsIP().toString().c_str());
-    if (MDNS.begin(hostname)) {
-      Serial.printf("  mDNS: http://%s.local\n", hostname);
-    } else {
-      Serial.println("  mDNS: failed to start");
-    }
     return true;
   }
 

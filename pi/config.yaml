@@ -6,6 +6,7 @@ camera:
   fps: 5
 
 detection:
+  model_name: "yolov8n.pt"
   model_path: "models/yolov8n_ncnn_model"
   confidence: 0.5
   input_size: 640       # 320 for pi4, re-run export_model.py if you change this

@@ -23,6 +23,31 @@
 // #endif
 
 
+// CONFIG
+//==================================================
+// ---- adjust these as needed ----
+// ENTEREXIT, OCCUPANCY, VIDEO_FOR_TRAINING (for training)
+const char* DEVICE_MODE = "ENTEREXIT"; 
+const int CAMERA_FPS = 4;
+
+// Video mode
+const char* VIDEO_SAVE_FOLDER = "/videos"; // SD card folder to save videos (for VIDEO_FOR_TRAINING mode)
+const float HOW_OFTEN_SAVE_VIDEO_FROM_JPG = 60.0f; // seconds - how often to save a new video file from JPG frames in VIDEO_FOR_TRAINING mode
+
+
+// Occupancy counting mode
+const float OCCUPANCY_EVERY_SECS = 30.0f;
+char global_csv_path[64] = "/occupancy.csv";
+
+
+// WiFi config (STA)
+const char* WIFI_SSID = "posterbuddy";
+const char* WIFI_USER = ""; // unused for WPA2-PSK
+const char* WIFI_PASS = "money4connie";
+//==================================================
+
+
+
 // Track most recent occupancy result so we can skip baseline updates when occupied.
 static int g_lastOccupancyCount = 0;
 
@@ -35,7 +60,21 @@ void setup() {
   Serial.begin(9600);
   delay(5000);
 
-  log_print(psramFound() ? "PSRAM: OK" : "PSRAM: NOT FOUND - camera may crash");
+  log_print(DEVICE_MODE);
+  
+  // What mode?
+  //================================
+  if (strcmp(DEVICE_MODE, "VIDEO_FOR_TRAINING") == 0) {
+    CreateTimer("SaveMJpeg", HOW_OFTEN_SAVE_VIDEO_FROM_JPG);
+
+  } else if (strcmp(DEVICE_MODE, "OCCUPANCY") == 0) {
+    CreateTimer("OccupancyEverySecs", OCCUPANCY_EVERY_SECS);
+
+  } else if (strcmp(DEVICE_MODE, "ENTEREXIT") == 0) {
+    log_print("ENTEREXIT mode ");
+  } else {
+    log_print(String("Unknown DEVICE_MODE: ") + DEVICE_MODE);
+  }
 
   bool ledOk = setupLED();
   if (ledOk) {
@@ -45,10 +84,18 @@ void setup() {
     log_print("LED setup failed.");
   }
 
+  bool cameraOk = CameraSetup(CAMERA_FPS, DEVICE_MODE);
+  if (cameraOk) {
+    log_print("Camera setup successful.");
+    blinkLED(2, "fast");
+  } else {
+    log_print("Camera setup failed.");
+  }
+
   bool sdOk = setupSDCard();
   if (sdOk) {
     log_print("SD Card setup successful.");
-    blinkLED(2, "fast");
+    blinkLED(3, "fast");
   } else {
     log_print("SD Card setup failed.");
     // Fail and blink SOS pattern if SD card is not working, since it's critical for operation
@@ -58,14 +105,7 @@ void setup() {
     }
   }
 
-  // Set global variables from SD's config.txt
-  setConfigFromSD();
-
-
-
-  // WiFi and clock are set up BEFORE the camera so that WiFi channel scanning
-  // does not cause VSYNC overflow in the camera DMA pipeline (cam_task stack overflow).
-  bool wifiOk = wifi_connect(g_wifiSsid, g_wifiUser, g_wifiPass, g_deviceName.c_str());
+  bool wifiOk = wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS);
   if (wifiOk) {
     log_print("WiFi connected.");
     turn_on_remote_serial_monitoring();
@@ -74,23 +114,14 @@ void setup() {
     log_print("WiFi connection failed.");
   }
 
-  bool clockOk = setupClock(g_wifiSsid.c_str(), g_wifiUser.c_str(), g_wifiPass.c_str());
-  if (clockOk) {
-    g_wifiSetTime = true;   // ← add this
+  bool clockOk = setupClock(WIFI_SSID, WIFI_USER, WIFI_PASS);
+  if ( clockOk) {
     log_print("Clock synced.");
     TimeExact theTime = WhatTimeIsItExactly();
     log_print(String("Current time: ") + theTime.hour + ":" + theTime.minute + ":" + theTime.second);
 
   } else {
     log_print("Clock sync failed.");
-  }
-
-  bool cameraOk = CameraSetup(CAMERA_FPS, g_deviceMode.c_str());
-  if (cameraOk) {
-    log_print("Camera setup successful.");
-    blinkLED(3, "fast");
-  } else {
-    log_print("Camera setup failed.");
   }
 
   // Test LED
@@ -104,7 +135,7 @@ void setup() {
   AverageFrameCreate(15); // Average frames for first 15 seconds to create initial average frame
   turnOffLED();
 
-  CreateTimer("CheckWifi", 300.0f); // Check WiFi every 3000 seconds
+  CreateTimer("CheckWifi", 30.0f); // Check WiFi every 3000 seconds
   CreateTimer("PrintStats", 60.0f); // Print stats every 60 seconds
   CreateTimer("UploadData", 60.0f); // Upload data every 60 seconds
 
@@ -113,10 +144,6 @@ void setup() {
 
   NameTheCSVFile();
   CreateCSVFile();
-
-  addEventToQue("POWERED_ON");
-
-  
 }
 
 void loop() {
@@ -143,21 +170,17 @@ void loop() {
 
     EnterExitDetector_v2_wAvg();
 
+
+    // if ( IsTimerElapsed("PrintStats") ) {
+    //   log_print("Free heap: " + String(ESP.getFreeHeap()));
+    //   RestartTimer("PrintStats");
+    // }
+
     if ( IsTimerElapsed("CheckWifi") ) {
       if (WiFi.status() != WL_CONNECTED) {
         log_print("WiFi disconnected, attempting reconnect...");
-        wifi_connect(g_wifiSsid, g_wifiUser, g_wifiPass);
+        wifi_connect(WIFI_SSID, WIFI_USER, WIFI_PASS);
       }
       RestartTimer("CheckWifi");
-    }
-
-    if ( IsTimerElapsed("UploadData") ) {
-      log_print("UploadData timer elapsed: " + String(GetTimerCurrent("UploadData")));
-      if (!LogQuedEvents()) {
-        log_print("Failed to log qued events");
-      } else {
-        log_print("Qued events logged successfully");
-      }
-      RestartTimer("UploadData");
     }
 }
