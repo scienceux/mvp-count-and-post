@@ -5,7 +5,6 @@
 .vscode/ipch
 
 # pi
-pi/models/
 pi/logs/
 pi/venv/
 __pycache__/
