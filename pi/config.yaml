@@ -20,9 +20,9 @@ logging:
   device_id: "booth-v3"
 
 display:
-  show: false           # true only if monitor is plugged in
+  show: true           # true only if monitor is plugged in
 
 upload:
-  url: ""               # Google Apps Script URL; leave empty to disable uploading
+  url: "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4da9DU8ci3qPRs9zRLqpAAVbiCkEpDq82b6GQKW-QwOY3Z-Erg/exec"  # Google Apps Script URL; leave empty to disable uploading
   event_id: "booth-v3"  # eventId param sent to the sheet
   interval_seconds: 30  # how often to attempt flush
