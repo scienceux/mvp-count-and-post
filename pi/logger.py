@@ -30,14 +30,14 @@ class EventLogger:
         is_new = not path.exists()
         self._f = open(path, "a", encoding="utf-8")
         if is_new:
-            self._f.write("timestamp,weekday,event,device_id,upload_status\n")
+            self._f.write("timestamp,weekday,event,count,device_id,upload_status\n")
             self._f.flush()
 
-    def log_event(self, event):
+    def log_event(self, event, count=1):
         now = datetime.now()
         ts = now.strftime("%Y-%m-%d %H:%M:%S")
         wd = WEEKDAYS[now.weekday()]
-        row = f"{ts},{wd},{event},{self._device},not uploaded"
+        row = f"{ts},{wd},{event},{count},{self._device},not uploaded"
         # write to queue only — permanent CSV is written after successful upload
         try:
             with open(self._queue_path, "a", encoding="utf-8") as qf:

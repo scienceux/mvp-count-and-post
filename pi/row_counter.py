@@ -10,8 +10,7 @@ import yaml
 from ultralytics import YOLO
 
 from camera import create_camera
-
-WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+from logger import EventLogger
 
 
 def load_config(path):
@@ -29,6 +28,7 @@ def main():
     roi_cfg = cfg["roi"]
     log_cfg = cfg["logging"]
     disp_cfg = cfg["display"]
+    upl_cfg = cfg.get("upload", {})
     interval = cfg.get("interval", 30)
     device_id = log_cfg.get("device_id", "row-A")
 
@@ -37,8 +37,12 @@ def main():
 
     roi_frac = (roi_cfg["x1"], roi_cfg["y1"], roi_cfg["x2"], roi_cfg["y2"])
 
-    csv_dir = Path(log_cfg.get("csv_dir", "logs"))
-    csv_dir.mkdir(parents=True, exist_ok=True)
+    logger = EventLogger(
+        csv_dir=log_cfg.get("csv_dir", "logs"),
+        device_id=device_id,
+        upload_url=upl_cfg.get("url") or None,
+        event_id=upl_cfg.get("event_id"),
+    )
 
     running = True
 
@@ -85,18 +89,9 @@ def main():
                 snap += 1
                 now = datetime.now()
                 ts = now.strftime("%Y-%m-%d %H:%M:%S")
-                wd = WEEKDAYS[now.weekday()]
 
-                # write to csv
-                csv_path = csv_dir / f"{now.date()}_{device_id}.csv"
-                is_new = not csv_path.exists()
-                try:
-                    with open(csv_path, "a") as f:
-                        if is_new:
-                            f.write("timestamp,weekday,count,device_id\n")
-                        f.write(f"{ts},{wd},{count},{device_id}\n")
-                except OSError as e:
-                    print(f"WARNING: log write failed: {e}", file=sys.stderr)
+                logger.log_event("OCCUPANCY", count=count)
+                logger.flush_queue()
 
                 print(f"[{ts}] #{snap} count={count}")
 
@@ -130,6 +125,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        logger.flush_queue()
+        logger.close()
         if disp_cfg.get("show", False):
             cv2.destroyAllWindows()
         print(f"\n--- done ---\nsnapshots: {snap}")

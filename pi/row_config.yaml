@@ -26,3 +26,8 @@ logging:
 
 display:
   show: false
+
+upload:
+  url: ""               # Google Apps Script URL; leave empty to disable uploading
+  event_id: "row-A"    # eventId param sent to the sheet
+  interval_seconds: 30  # matches the snapshot interval
