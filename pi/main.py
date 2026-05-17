@@ -27,6 +27,7 @@ def main():
     cnt_cfg = cfg["counter"]
     log_cfg = cfg["logging"]
     disp_cfg = cfg["display"]
+    upl_cfg = cfg.get("upload", {})
 
     line_frac = cnt_cfg.get("line_position", 0.5)
     fps = cam_cfg.get("fps", 5)
@@ -36,7 +37,12 @@ def main():
     logger = EventLogger(
         csv_dir=log_cfg.get("csv_dir", "logs"),
         device_id=log_cfg.get("device_id", "door-left"),
+        upload_url=upl_cfg.get("url") or None,
+        event_id=upl_cfg.get("event_id"),
     )
+    # how often to attempt uploading the queue to the server
+    flush_interval = upl_cfg.get("interval_seconds", 30)
+    last_flush = time.time()
 
     running = True
 
@@ -109,6 +115,11 @@ def main():
                 prev_in = cur_in
                 prev_out = cur_out
 
+                # periodically upload queued events to the server
+                if time.time() - last_flush >= flush_interval:
+                    logger.flush_queue()
+                    last_flush = time.time()
+
                 if disp_cfg.get("show", False):
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
@@ -120,6 +131,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        # flush any remaining queued events before exiting
+        logger.flush_queue()
         logger.close()
         if disp_cfg.get("show", False):
             cv2.destroyAllWindows()

@@ -17,7 +17,12 @@ counter:
 
 logging:
   csv_dir: "logs"
-  device_id: "door-left"
+  device_id: "booth-v3"
 
 display:
   show: false           # true only if monitor is plugged in
+
+upload:
+  url: ""               # Google Apps Script URL; leave empty to disable uploading
+  event_id: "booth-v3"  # eventId param sent to the sheet
+  interval_seconds: 30  # how often to attempt flush
