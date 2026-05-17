@@ -1,6 +1,7 @@
 import time
 import signal
 import argparse
+import subprocess
 from pathlib import Path
 
 import cv2
@@ -14,6 +15,18 @@ from logger import EventLogger
 def load_config(path):
     with open(path, "r") as f:
         return yaml.safe_load(f)
+
+
+# check if the system clock is NTP-synced; falls back to "estimated" if not or if the check fails
+def is_ntp_synced():
+    try:
+        out = subprocess.check_output(
+            ["timedatectl", "show", "--property=NTPSynchronized"],
+            text=True
+        )
+        return "NTPSynchronized=yes" in out
+    except Exception:
+        return False
 
 
 def main():
@@ -39,6 +52,7 @@ def main():
         device_id=log_cfg.get("device_id", "door-left"),
         upload_url=upl_cfg.get("url") or None,
         event_id=upl_cfg.get("event_id"),
+        time_source="ntp" if is_ntp_synced() else "estimated",
     )
     # how often to attempt uploading the queue to the server
     flush_interval = upl_cfg.get("interval_seconds", 30)

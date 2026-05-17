@@ -8,12 +8,13 @@ WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
 class EventLogger:
-    def __init__(self, csv_dir, device_id, upload_url=None, event_id=None):
+    def __init__(self, csv_dir, device_id, upload_url=None, event_id=None, time_source="ntp"):
         self._dir = Path(csv_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._device = device_id
         self._upload_url = upload_url
         self._event_id = event_id or device_id
+        self._time_source = time_source  # "ntp" or "estimated" — checked once at startup
         # staging file for events not yet uploaded
         self._queue_path = self._dir / "queue.csv"
         self._date = None
@@ -30,14 +31,14 @@ class EventLogger:
         is_new = not path.exists()
         self._f = open(path, "a", encoding="utf-8")
         if is_new:
-            self._f.write("timestamp,weekday,event,count,device_id,upload_status\n")
+            self._f.write("timestamp,weekday,event,count,device_id,time_source\n")
             self._f.flush()
 
     def log_event(self, event, count=1):
         now = datetime.now()
         ts = now.strftime("%Y-%m-%d %H:%M:%S")
         wd = WEEKDAYS[now.weekday()]
-        row = f"{ts},{wd},{event},{count},{self._device},not uploaded"
+        row = f"{ts},{wd},{event},{count},{self._device},{self._time_source}"
         # write to queue only — permanent CSV is written after successful upload
         try:
             with open(self._queue_path, "a", encoding="utf-8") as qf:
@@ -88,8 +89,7 @@ class EventLogger:
             try:
                 self._open_permanent(now)
                 for row in uploaded:
-                    permanent_row = row[:-len("not uploaded")] + "uploaded"
-                    self._f.write(permanent_row + "\n")
+                    self._f.write(row + "\n")
                 self._f.flush()
             except OSError as e:
                 print(f"WARNING: permanent CSV write failed: {e}", file=sys.stderr)
