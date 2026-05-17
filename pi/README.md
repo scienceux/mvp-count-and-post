@@ -1,15 +1,19 @@
 # pi people counter
 
-YOLOv8n + ByteTrack on a Pi 5 (or Pi 4). Counts people crossing a line, logs to CSV.
+Two tools in one folder:
+
+- **main.py** -- enter/exit door counter (YOLOv8n + ByteTrack, tracks people crossing a line)
+- **row_counter.py** -- row occupancy counter (YOLOv8s, snapshots every N seconds, counts people in a region)
 
 ## setup
 
-### 1. export model (on your dev machine, not the pi)
+### 1. export models (on your dev machine, not the pi)
 
 ```
 cd pi/
 pip install ultralytics ncnn pnnx
-python export_model.py
+python export_model.py                      # yolov8n for door counter
+python export_model.py --config row_config.yaml   # yolov8s for row counter
 ```
 
 ### 2. copy to pi
@@ -88,9 +92,37 @@ python main.py
 
 Or set `camera.source` to a video file.
 
+## row counter (poster rows)
+
+Counts how many people are standing in a poster row. Takes a snapshot every N
+seconds, runs detection, filters to an ROI, logs the count.
+
+```
+python row_counter.py
+```
+
+Edit `row_config.yaml`:
+
+- `detection.model_name` -- uses yolov8s by default (better accuracy, speed doesn't matter)
+- `roi` -- x1/y1/x2/y2 as fractions of frame size, defines where the row is. anything outside gets ignored (filters out passersby at the end of the row)
+- `interval` -- seconds between snapshots (default 30)
+- `logging.device_id` -- e.g. `"row-A"`, `"row-B"`
+
+CSV format for row counter:
+
+```
+timestamp,weekday,count,device_id
+2026-05-05 14:30:01,Mon,12,row-A
+2026-05-05 14:31:01,Mon,8,row-A
+```
+
+Mount the camera high up on the poster board looking down the row at an angle
+for best results. Reduces occlusion so it can see more people.
+
 ## troubleshooting
 
 - too many false positives -- bump `confidence` up (0.6, 0.7)
 - missing people -- lower `confidence` (0.3, 0.4)
 - enter/exit swapped -- rotate camera 180 or mess with `line_position`
 - double counting -- try `tracker: "botsort.yaml"` instead of bytetrack
+- row counter counting passersby -- tighten the `roi` bounds in row_config.yaml

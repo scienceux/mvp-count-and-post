@@ -1,48 +1,79 @@
-"""Download YOLOv8n and export to NCNN. Run on dev machine, copy models/ to Pi."""
+"""Download YOLOv8 models and export to NCNN. Run on dev machine, copy models/ to Pi."""
 
+import argparse
+import shutil
 from pathlib import Path
 
 import yaml
 from ultralytics import YOLO
 
-MODEL = "yolov8n.pt"
-OUT = Path(__file__).parent / "models"
-CFG = Path(__file__).parent / "config.yaml"
+PI_DIR = Path(__file__).parent
+OUT = PI_DIR / "models"
+
+DEFAULT_CONFIGS = [
+    PI_DIR / "config.yaml",      # door / enter-exit counter  (yolov8n)
+    PI_DIR / "row_config.yaml",  # row occupancy counter       (yolov8s)
+]
 
 
-def main():
-    OUT.mkdir(parents=True, exist_ok=True)
-
+def export_one(cfg_path: Path):
+    model_name = "yolov8n.pt"
     imgsz = 640
-    if CFG.exists():
-        with open(CFG) as f:
-            c = yaml.safe_load(f)
-        imgsz = c.get("detection", {}).get("input_size", 640)
 
-    print(f"downloading {MODEL}...")
-    model = YOLO(MODEL)
+    if cfg_path.exists():
+        with open(cfg_path) as f:
+            c = yaml.safe_load(f)
+        det = c.get("detection", {})
+        model_name = det.get("model_name", model_name)
+        imgsz = det.get("input_size", imgsz)
+    else:
+        print(f"warning: config {cfg_path} not found, skipping")
+        return
+
+    stem = model_name.replace(".pt", "")
+    dst = OUT / f"{stem}_ncnn_model"
+
+    if dst.exists():
+        print(f"skipping {model_name} -- {dst} already exists")
+        return
+
+    print(f"\n--- {cfg_path.name}: downloading {model_name} ---")
+    model = YOLO(model_name)
 
     print(f"exporting to ncnn (imgsz={imgsz})...")
     model.export(format="ncnn", imgsz=imgsz)
 
-    src = Path(MODEL.replace(".pt", "_ncnn_model"))
-    dst = OUT / "yolov8n_ncnn_model"
-
+    src = Path(f"{stem}_ncnn_model")
     if src.exists():
-        if dst.exists():
-            import shutil
-            shutil.rmtree(dst)
         src.rename(dst)
         print(f"saved to {dst}")
     else:
         print(f"warning: {src} not found, check export output")
         return
 
-    pt = Path(MODEL)
+    pt = Path(model_name)
     if pt.exists():
         pt.unlink()
 
-    print("done -- copy pi/ folder to your raspberry pi")
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config",
+        nargs="+",
+        default=None,
+        help="one or more config files to export (default: all configs)",
+    )
+    args = parser.parse_args()
+
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    configs = [Path(c) for c in args.config] if args.config else DEFAULT_CONFIGS
+
+    for cfg in configs:
+        export_one(cfg)
+
+    print("\ndone -- copy pi/ folder to your raspberry pi")
 
 
 if __name__ == "__main__":
