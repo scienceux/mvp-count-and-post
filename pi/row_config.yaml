@@ -26,7 +26,7 @@ logging:
   device_id: "row-A"
 
 display:
-  show: false
+  show: true
 
 upload:
   url: "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4da9DU8ci3qPRs9zRLqpAAVbiCkEpDq82b6GQKW-QwOY3Z-Erg/exec"  # Google Apps Script URL; leave empty to disable uploading
