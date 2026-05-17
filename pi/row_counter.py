@@ -63,6 +63,16 @@ def main():
                 print("ERROR: can't read from camera")
                 return
 
+            # discard frames while the camera adjusts exposure
+            warmup = cfg["camera"].get("warmup_seconds", 0)
+            if warmup > 0:
+                print(f"warming up camera for {warmup}s...")
+                t_end = time.time() + warmup
+                while time.time() < t_end:
+                    ok, first = cam.read()
+                    if not ok or first is None:
+                        break
+
             h, w = first.shape[:2]
             rx1 = int(w * roi_frac[0])
             ry1 = int(h * roi_frac[1])

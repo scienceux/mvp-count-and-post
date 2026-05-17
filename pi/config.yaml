@@ -4,6 +4,7 @@ camera:
   width: 640
   height: 480
   fps: 5
+  warmup_seconds: 2     # frames to discard on startup while camera adjusts exposure
 
 detection:
   model_name: "yolov8n.pt"
