@@ -38,7 +38,7 @@ class EventLogger:
         now = datetime.now()
         ts = now.strftime("%Y-%m-%d %H:%M:%S")
         wd = WEEKDAYS[now.weekday()]
-        row = f"{ts},{wd},{event},{count},{self._device},{self._time_source}"
+        row = f"{ts},{wd},{self._device},{event},{count},{self._time_source}"
         # write to queue only — permanent CSV is written after successful upload
         try:
             with open(self._queue_path, "a", encoding="utf-8") as qf:
