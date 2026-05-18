@@ -31,7 +31,7 @@ class EventLogger:
         is_new = not path.exists()
         self._f = open(path, "a", encoding="utf-8")
         if is_new:
-            self._f.write("timestamp,weekday,event,count,device_id,time_source\n")
+            self._f.write("timestamp,weekday,device_id,event,count,time_source\n")
             self._f.flush()
 
     def log_event(self, event, count=1):
