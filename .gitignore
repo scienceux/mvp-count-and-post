@@ -7,4 +7,5 @@
 # pi
 pi/logs/
 pi/venv/
+pi/device.yaml
 __pycache__/

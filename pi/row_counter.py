@@ -19,6 +19,58 @@ def load_config(path):
         return yaml.safe_load(f)
 
 
+def load_device_config(cfg):
+    """Load pi/device.yaml and apply overrides onto cfg. Creates the file with defaults if missing."""
+    path = Path(__file__).parent / "device.yaml"
+
+    if not path.exists():
+        roi = cfg.get("roi", {})
+        defaults = {
+            "device_id": cfg.get("logging", {}).get("device_id", "my-device"),
+            "event_id": cfg.get("upload", {}).get("event_id", "my-device"),
+            "rotation": 0,
+            "roi": {
+                "x1": roi.get("x1", 0.0),
+                "y1": roi.get("y1", 0.0),
+                "x2": roi.get("x2", 0.85),
+                "y2": roi.get("y2", 1.0),
+            },
+        }
+        lines = [
+            "# Per-device settings — git-ignored, edit this file for each Pi.\n",
+            "# Overrides values in row_config.yaml without touching the shared config.\n",
+            "\n",
+            f"device_id: \"{defaults['device_id']}\"   # name for this device (CSV filenames, logs)\n",
+            f"event_id: \"{defaults['event_id']}\"    # Google Sheets event ID (usually same as device_id)\n",
+            f"rotation: {defaults['rotation']}                    # camera rotation in degrees: 0, 90, 180, or 270\n",
+            "\n",
+            "# region of interest — fractions of frame (0.0-1.0), applied after rotation\n",
+            "roi:\n",
+            f"  x1: {defaults['roi']['x1']}\n",
+            f"  y1: {defaults['roi']['y1']}\n",
+            f"  x2: {defaults['roi']['x2']}\n",
+            f"  y2: {defaults['roi']['y2']}\n",
+        ]
+        path.write_text("".join(lines), encoding="utf-8")
+        print(f"created {path} with defaults -- edit it for this device")
+        return defaults
+
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def apply_device_config(cfg, dev):
+    """Overlay device-specific values from dev onto cfg in-place."""
+    if "device_id" in dev:
+        cfg.setdefault("logging", {})["device_id"] = dev["device_id"]
+    if "event_id" in dev:
+        cfg.setdefault("upload", {})["event_id"] = dev["event_id"]
+    if "rotation" in dev:
+        cfg.setdefault("camera", {})["rotation"] = dev["rotation"]
+    if "roi" in dev:
+        cfg.setdefault("roi", {}).update(dev["roi"])
+
+
 # check if the system clock is NTP-synced; falls back to "estimated" if not or if the check fails
 def is_ntp_synced():
     try:
@@ -37,6 +89,7 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    apply_device_config(cfg, load_device_config(cfg))
     det_cfg = cfg["detection"]
     roi_cfg = cfg["roi"]
     log_cfg = cfg["logging"]

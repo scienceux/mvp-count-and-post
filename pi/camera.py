@@ -1,6 +1,20 @@
 import time
 import cv2
 
+# maps rotation degrees to OpenCV rotate codes
+_ROTATION_MAP = {
+    90:  cv2.ROTATE_90_CLOCKWISE,
+    180: cv2.ROTATE_180,
+    270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+}
+
+
+def _rotate(frame, degrees):
+    code = _ROTATION_MAP.get(degrees)
+    if code is None:
+        return frame
+    return cv2.rotate(frame, code)
+
 
 def create_camera(cfg):
     src = cfg["camera"]["source"]
@@ -16,6 +30,7 @@ class USBCamera:
         self._idx = cfg["camera"].get("device_index", 0)
         self._w = cfg["camera"].get("width", 640)
         self._h = cfg["camera"].get("height", 480)
+        self._rotation = cfg["camera"].get("rotation", 0)
         self._cap = None
 
     def open(self):
@@ -38,6 +53,8 @@ class USBCamera:
                 ok, frame = self._cap.read()
             except RuntimeError:
                 return False, None
+        if ok and frame is not None:
+            frame = _rotate(frame, self._rotation)
         return ok, frame
 
     def close(self):
@@ -58,6 +75,7 @@ class CSICamera:
         self._w = cfg["camera"].get("width", 640)
         self._h = cfg["camera"].get("height", 480)
         self._fps = cfg["camera"].get("fps", 5)
+        self._rotation = cfg["camera"].get("rotation", 0)
         self._cam = None
 
     def open(self):
@@ -77,14 +95,16 @@ class CSICamera:
         if self._cam is None:
             self.open()
         try:
-            return True, self._cam.capture_array()
+            frame = self._cam.capture_array()
+            return True, _rotate(frame, self._rotation)
         except Exception as e:
             print(f"CSI read failed: {e}, reconnecting...")
             self.close()
             time.sleep(2)
             try:
                 self.open()
-                return True, self._cam.capture_array()
+                frame = self._cam.capture_array()
+                return True, _rotate(frame, self._rotation)
             except Exception:
                 return False, None
 
@@ -105,6 +125,7 @@ class CSICamera:
 class VideoFileCamera:
     def __init__(self, cfg):
         self._path = cfg["camera"]["source"]
+        self._rotation = cfg["camera"].get("rotation", 0)
         self._cap = None
 
     def open(self):
@@ -115,7 +136,10 @@ class VideoFileCamera:
     def read(self):
         if self._cap is None:
             self.open()
-        return self._cap.read()
+        ok, frame = self._cap.read()
+        if ok and frame is not None:
+            frame = _rotate(frame, self._rotation)
+        return ok, frame
 
     def close(self):
         if self._cap is not None:
