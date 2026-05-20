@@ -122,7 +122,7 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     config.pixel_format = (camMode == MODE_JPEG) ? PIXFORMAT_JPEG : PIXFORMAT_GRAYSCALE;
     config.frame_size   = (camMode == MODE_JPEG) ? FRAMESIZE_VGA   : FRAMESIZE_VGA;
     config.jpeg_quality = (camMode == MODE_JPEG) ? 12              : 0;
-    config.fb_count     = (camMode == MODE_JPEG) ? 2               : 1;
+    config.fb_count     = 2; // 2 buffers for both modes — prevents cam_task stack overflow on EV-VSYNC-OVF during init
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
