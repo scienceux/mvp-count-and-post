@@ -151,13 +151,20 @@ void loop() {
       RestartTimer("CheckWifi");
     }
 
-    if ( IsTimerElapsed("UploadData") ) {
-      log_print("UploadData timer elapsed: " + String(GetTimerCurrent("UploadData")));
-      if (!LogQuedEvents()) {
-        log_print("Failed to log qued events");
-      } else {
-        log_print("Qued events logged successfully");
+    
+    if (WiFi.status() == WL_CONNECTED) {    
+      if ( IsTimerElapsed("UploadData") ) {
+        log_print("UploadData timer elapsed: " + String(GetTimerCurrent("UploadData")));
+        if (!LogQuedEvents()) {
+          log_print("Failed to log qued events");
+          if (WiFi.status() != WL_CONNECTED) {
+            log_print("Maybe because no wifi");
+          }
+
+        } else {
+          log_print("Qued events logged successfully");
+        }
+        RestartTimer("UploadData");
       }
-      RestartTimer("UploadData");
     }
 }
