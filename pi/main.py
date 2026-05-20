@@ -27,6 +27,7 @@ def load_device_config(cfg):
             "event_id": cfg.get("upload", {}).get("event_id", "my-device"),
             "rotation": 0,
             "line_position": cfg.get("counter", {}).get("line_position", 0.5),
+            "swap_enter_exit": False,
         }
         lines = [
             "# Per-device settings — git-ignored, edit this file for each Pi.\n",
@@ -36,6 +37,7 @@ def load_device_config(cfg):
             f"event_id: \"{defaults['event_id']}\"    # Google Sheets event ID (usually same as device_id)\n",
             f"rotation: {defaults['rotation']}                    # camera rotation in degrees: 0, 90, 180, or 270\n",
             f"line_position: {defaults['line_position']}           # counting line: 0.0=top, 1.0=bottom\n",
+            f"swap_enter_exit: false              # set true if enter/exit are reversed for this mount\n",
         ]
         path.write_text("".join(lines), encoding="utf-8")
         print(f"created {path} with defaults -- edit it for this device")
@@ -55,6 +57,8 @@ def apply_device_config(cfg, dev):
         cfg.setdefault("camera", {})["rotation"] = dev["rotation"]
     if "line_position" in dev:
         cfg.setdefault("counter", {})["line_position"] = dev["line_position"]
+    if "swap_enter_exit" in dev:
+        cfg.setdefault("counter", {})["swap_enter_exit"] = dev["swap_enter_exit"]
 
 
 # check if the system clock is NTP-synced; falls back to "estimated" if not or if the check fails
@@ -84,6 +88,7 @@ def main():
     upl_cfg = cfg.get("upload", {})
 
     line_frac = cnt_cfg.get("line_position", 0.5)
+    swap_enter_exit = cnt_cfg.get("swap_enter_exit", False)
     fps = cam_cfg.get("fps", 5)
     frame_interval = 1.0 / fps
     model_path = det_cfg.get("model_path", "models/yolov8n_ncnn_model")
@@ -169,10 +174,11 @@ def main():
                 d_in = cur_in - prev_in
                 d_out = cur_out - prev_out
 
+                enter_event, exit_event = ("EXIT", "ENTER") if swap_enter_exit else ("ENTER", "EXIT")
                 for _ in range(d_in):
-                    logger.log_event("ENTER")
+                    logger.log_event(enter_event)
                 for _ in range(d_out):
-                    logger.log_event("EXIT")
+                    logger.log_event(exit_event)
 
                 if d_in or d_out:
                     print(f"[{n_frames}] IN:{cur_in}(+{d_in}) OUT:{cur_out}(+{d_out})")

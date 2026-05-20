@@ -173,9 +173,18 @@ Frame CameraGetCopyOfLatestFrame()
 
     // Pull eyeball out of socket to get latest frame
     camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) {
+        log_print("CameraGetCopyOfLatestFrame: esp_camera_fb_get returned null");
+        return out;
+    }
 
     // Pave a parking space in memory for our (numberic) pixel data of size fb->len
     out.copyOfbufferInMemory = (uint32_t*)malloc(fb->len);
+    if (!out.copyOfbufferInMemory) {
+        log_print("CameraGetCopyOfLatestFrame: malloc failed");
+        esp_camera_fb_return(fb);
+        return out;
+    }
 
     // Park actual pixel data into our parking space
     memcpy(out.copyOfbufferInMemory, fb->buf, fb->len);
