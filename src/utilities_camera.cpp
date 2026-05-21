@@ -182,6 +182,7 @@ Frame CameraGetCopyOfLatestFrame()
 {
     Frame out;
     out.copyOfbufferInMemory = nullptr;
+    out.bufferLen = 0;
     out.timecaptured = 0;
     out.valid = false;
 
@@ -192,8 +193,9 @@ Frame CameraGetCopyOfLatestFrame()
         return out;
     }
 
-    // Pave a parking space in memory for our (numberic) pixel data of size fb->len
-    out.copyOfbufferInMemory = (uint32_t*)malloc(fb->len);
+    // Pave a parking space in memory for our pixel data of size fb->len.
+    // Prefer PSRAM to reduce pressure on internal RAM.
+    out.copyOfbufferInMemory = (uint8_t*)ps_malloc(fb->len);
     if (!out.copyOfbufferInMemory) {
         log_print("CameraGetCopyOfLatestFrame: malloc failed");
         esp_camera_fb_return(fb);
@@ -202,6 +204,7 @@ Frame CameraGetCopyOfLatestFrame()
 
     // Park actual pixel data into our parking space
     memcpy(out.copyOfbufferInMemory, fb->buf, fb->len);
+    out.bufferLen = fb->len;
 
     // Give it our standard metadata
     out.timecaptured = millis();
@@ -296,9 +299,37 @@ bool AverageFrameCreate(int numSecondsToAverage) {
     }
 
     // Capture frames and update average until time's up
+    // Guard against occasional bad startup frames on marginal hardware.
+    uint32_t badFrameCount = 0;
     while ((millis() - start) < numMillisToAverage) { // numMillisToAverage are from numSecondsToAverage
         camera_fb_t* fb = esp_camera_fb_get();
-        if (!fb) { turnOffLED(); return false; }
+        if (!fb) {
+            badFrameCount++;
+            if (badFrameCount > 20) {
+                log_print("AverageFrameCreate: too many null frames");
+                turnOffLED();
+                return false;
+            }
+            delay(10);
+            continue;
+        }
+
+        if (fb->format != PIXFORMAT_GRAYSCALE || fb->len < NPIX) {
+            badFrameCount++;
+            if (badFrameCount <= 5) {
+                log_print(String("AverageFrameCreate: skipping bad frame fmt=") + (int)fb->format +
+                          String(" len=") + (uint32_t)fb->len);
+            }
+            esp_camera_fb_return(fb);
+            if (badFrameCount > 20) {
+                turnOffLED();
+                return false;
+            }
+            delay(10);
+            continue;
+        }
+
+        badFrameCount = 0;
 
         // IMPORTANT: assumes fb->format == PIXFORMAT_GRAYSCALE and fb->len == NPIX
         for (size_t i = 0; i < NPIX; i++) {
