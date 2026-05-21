@@ -119,12 +119,12 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     config.xclk_freq_hz = 10000000; // 10MHz (down from 20MHz) reduces frame rate from sensor, preventing DMA VSYNC overflow on startup
 
     // Grayscale for counting, or JPEG for training data?
-    config.pixel_format = (camMode == MODE_JPEG) ? PIXFORMAT_JPEG : PIXFORMAT_GRAYSCALE;
-    config.frame_size   = (camMode == MODE_JPEG) ? FRAMESIZE_VGA   : FRAMESIZE_VGA;
-    config.jpeg_quality = (camMode == MODE_JPEG) ? 12              : 0;
-    config.fb_count     = 2; // Use 2 frame buffers to allow camera to capture into one while we process the other, improving FPS and preventing VSYNC overflow on slower hardware.
-    // config.grab_mode = CAMERA_GRAB_LATEST;
-    // config.fb_location = CAMERA_FB_IN_PSRAM;    
+    config.pixel_format = PIXFORMAT_GRAYSCALE;
+    config.frame_size   = FRAMESIZE_VGA;
+    config.jpeg_quality = 15;
+    config.fb_count     = 1; // Use 1 frame buffer to allow camera to capture into one while we process the other, improving FPS and preventing VSYNC overflow on slower hardware.
+    config.grab_mode = CAMERA_GRAB_WHEN_EMPTY; // Fill buffers when they are empty. Less resources but first 'fb_count' frames might be old. Safer for low-end hardware to prevent VSYNC overflow on startup.
+    config.fb_location = CAMERA_FB_IN_PSRAM;    
 
     log_print("Initializing camera with _init...");
 
@@ -138,13 +138,12 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
 
     // Flush any frames the sensor produced during init before the DMA was ready.
     // Without this, the frame buffer fills immediately and cam_task overflows on slow/marginal hardware.
-    // delay(100);
-    // for (int i = 0; i < 5; i++) {
-    //     camera_fb_t* fb = esp_camera_fb_get();
-    //     delay(100);
-    //     if (fb) esp_camera_fb_return(fb);
-    //     delay(100);
-    // }
+    delay(100);
+    for (int i = 0; i < 5; i++) {
+        camera_fb_t* fb = esp_camera_fb_get();
+        if (fb) esp_camera_fb_return(fb);
+        delay(100);
+    }
 
     log_print("About to run sensor_get...");
 
