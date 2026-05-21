@@ -122,22 +122,35 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     config.pixel_format = (camMode == MODE_JPEG) ? PIXFORMAT_JPEG : PIXFORMAT_GRAYSCALE;
     config.frame_size   = (camMode == MODE_JPEG) ? FRAMESIZE_VGA   : FRAMESIZE_VGA;
     config.jpeg_quality = (camMode == MODE_JPEG) ? 12              : 0;
-    config.fb_count     = (camMode == MODE_JPEG) ? 2               : 1;
+    config.fb_count     = 2; // Use 2 frame buffers to allow camera to capture into one while we process the other, improving FPS and preventing VSYNC overflow on slower hardware.
+    // config.grab_mode = CAMERA_GRAB_LATEST;
+    // config.fb_location = CAMERA_FB_IN_PSRAM;    
+
+    log_print("Initializing camera with _init...");
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
         return false;
     }
 
+
+    log_print("About to flush frames...");    
+
     // Flush any frames the sensor produced during init before the DMA was ready.
     // Without this, the frame buffer fills immediately and cam_task overflows on slow/marginal hardware.
-    delay(100);
-    for (int i = 0; i < 5; i++) {
-        camera_fb_t* fb = esp_camera_fb_get();
-        if (fb) esp_camera_fb_return(fb);
-    }
+    // delay(100);
+    // for (int i = 0; i < 5; i++) {
+    //     camera_fb_t* fb = esp_camera_fb_get();
+    //     delay(100);
+    //     if (fb) esp_camera_fb_return(fb);
+    //     delay(100);
+    // }
+
+    log_print("About to run sensor_get...");
 
     sensor_t* sensor = esp_camera_sensor_get();
+
+    log_print("About to run a bunch of sensor->set_ functions...");    
 
     // optional defaults
     sensor->set_gain_ctrl(sensor, 0); // Disable auto-gain because that f's with brightness
@@ -155,6 +168,8 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     // Fix mirrored image by disabling horizontal mirroring
     sensor->set_hmirror(sensor, 1);          // disable horizontal mirroring (0 = no mirror, 1 = mirror)
     sensor->set_vflip(sensor, 0);            // disable vertical flipping (0 = no flip, 1 = flip)
+
+    log_print("camera setup done, about to return true");
 
     return true;
 }

@@ -62,6 +62,37 @@ void setup() {
   setConfigFromSD();
 
 
+  log_print("Delay done. About to setup camera...");
+
+  bool cameraOk = CameraSetup(CAMERA_FPS, g_deviceMode.c_str());
+  if (cameraOk) {
+    log_print("Camera setup successful.");
+    blinkLED(3, "fast");
+  } else {
+    log_print("Camera setup failed.");
+  }
+
+  log_print("All camera setup complete, about to create initial average frame...");
+
+  // Test LED
+  turnOnLED();
+  delay(2000);
+  turnOffLED();
+
+
+  CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 60 seconds
+  AverageFrameCreate(15); // Average frames for first 15 seconds to create initial average frame
+
+  CreateTimer("CheckWifi", 300.0f); // Check WiFi every 3000 seconds
+  CreateTimer("PrintStats", 60.0f); // Print stats every 60 seconds
+  CreateTimer("UploadData", 35.0f); // Upload data every 60 seconds
+
+  String CurrentTime = String(WhatTimeIsItExactly().hour) + ":" + String(WhatTimeIsItExactly().minute) + ":" + String(WhatTimeIsItExactly().second);
+  log_print(String("Setup complete at ") + CurrentTime);
+
+  NameTheCSVFile();
+  CreateCSVFile();
+
 
   // WiFi and clock are set up BEFORE the camera so that WiFi channel scanning
   // does not cause VSYNC overflow in the camera DMA pipeline (cam_task stack overflow).
@@ -85,34 +116,7 @@ void setup() {
     log_print("Clock sync failed.");
   }
 
-  bool cameraOk = CameraSetup(CAMERA_FPS, g_deviceMode.c_str());
-  if (cameraOk) {
-    log_print("Camera setup successful.");
-    blinkLED(3, "fast");
-  } else {
-    log_print("Camera setup failed.");
-  }
-
-  // Test LED
-  turnOnLED();
-  delay(2000);
-  turnOffLED();
-
-
-  CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 60 seconds
-  turnOnLED();
-  AverageFrameCreate(15); // Average frames for first 15 seconds to create initial average frame
-  turnOffLED();
-
-  CreateTimer("CheckWifi", 300.0f); // Check WiFi every 3000 seconds
-  CreateTimer("PrintStats", 60.0f); // Print stats every 60 seconds
-  CreateTimer("UploadData", 60.0f); // Upload data every 60 seconds
-
-  String CurrentTime = String(WhatTimeIsItExactly().hour) + ":" + String(WhatTimeIsItExactly().minute) + ":" + String(WhatTimeIsItExactly().second);
-  log_print(String("Setup complete at ") + CurrentTime);
-
-  NameTheCSVFile();
-  CreateCSVFile();
+  delay(1000); // Short delay before starting camera setup to allow any pending WiFi operations to complete and avoid camera init issues.  
 
   addEventToQue("POWERED_ON");
 
