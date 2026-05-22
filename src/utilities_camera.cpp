@@ -122,7 +122,7 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     config.pixel_format = PIXFORMAT_GRAYSCALE;
     config.frame_size   = FRAMESIZE_VGA;
     config.jpeg_quality = 15;
-    config.fb_count     = 1; // Use 1 frame buffer to allow camera to capture into one while we process the other, improving FPS and preventing VSYNC overflow on slower hardware.
+    config.fb_count     = 1; // Use 2 frame buffers to allow camera to capture into one while we process the other, improving FPS and preventing VSYNC overflow on slower hardware.
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY; // Fill buffers when they are empty. Less resources but first 'fb_count' frames might be old. Safer for low-end hardware to prevent VSYNC overflow on startup.
     config.fb_location = CAMERA_FB_IN_PSRAM;    
 
