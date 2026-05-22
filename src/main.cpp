@@ -87,15 +87,7 @@ void setup() {
   CreateTimer("PrintStats", 60.0f); // Print stats every 60 seconds
   CreateTimer("UploadData", 35.0f); // Upload data every 60 seconds
 
-  String CurrentTime = String(WhatTimeIsItExactly().hour) + ":" + String(WhatTimeIsItExactly().minute) + ":" + String(WhatTimeIsItExactly().second);
-  log_print(String("Setup complete at ") + CurrentTime);
-
-  NameTheCSVFile();
-  CreateCSVFile();
-
-
-  // WiFi and clock are set up BEFORE the camera so that WiFi channel scanning
-  // does not cause VSYNC overflow in the camera DMA pipeline (cam_task stack overflow).
+  // WiFi after camera and average frame to avoid VSYNC overflow during camera init
   bool wifiOk = wifi_connect(g_wifiSsid, g_wifiUser, g_wifiPass, g_deviceName.c_str());
   if (wifiOk) {
     log_print("WiFi connected.");
@@ -107,16 +99,20 @@ void setup() {
 
   bool clockOk = setupClock(g_wifiSsid.c_str(), g_wifiUser.c_str(), g_wifiPass.c_str());
   if (clockOk) {
-    g_wifiSetTime = true;   // ← add this
+    g_wifiSetTime = true;
     log_print("Clock synced.");
     TimeExact theTime = WhatTimeIsItExactly();
     log_print(String("Current time: ") + theTime.hour + ":" + theTime.minute + ":" + theTime.second);
-
   } else {
     log_print("Clock sync failed.");
   }
 
-  delay(1000); // Short delay before starting camera setup to allow any pending WiFi operations to complete and avoid camera init issues.  
+  // Name and create CSV after clock sync so the filename uses the correct time
+  NameTheCSVFile();
+  CreateCSVFile();
+
+  String CurrentTime = String(WhatTimeIsItExactly().hour) + ":" + String(WhatTimeIsItExactly().minute) + ":" + String(WhatTimeIsItExactly().second);
+  log_print(String("Setup complete at ") + CurrentTime);
 
   addEventToQue("POWERED_ON");
 
