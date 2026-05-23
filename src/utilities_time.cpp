@@ -62,6 +62,8 @@ bool setupClock(const char* ssid, const char* user, const char* pass)
     }    
 
     configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
+    setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1);
+    tzset();    
 
     const unsigned long start = millis();
     while ((millis() - start) < 15000) {
