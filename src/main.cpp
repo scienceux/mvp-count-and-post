@@ -61,6 +61,26 @@ void setup() {
   // Set global variables from SD's config.txt
   setConfigFromSD();
 
+    // WiFi after camera and average frame to avoid VSYNC overflow during camera init
+  bool wifiOk = wifi_connect(g_wifiSsid, g_wifiUser, g_wifiPass, g_deviceName.c_str());
+  if (wifiOk) {
+    log_print("WiFi connected.");
+    turn_on_remote_serial_monitoring();
+    enable_remote_serial(true);
+  } else {
+    log_print("WiFi connection failed.");
+  }
+
+  bool clockOk = setupClock(g_wifiSsid.c_str(), g_wifiUser.c_str(), g_wifiPass.c_str());
+  if (clockOk) {
+    g_wifiSetTime = true;
+    log_print("Clock synced.");
+    TimeExact theTime = WhatTimeIsItExactly();
+    log_print(String("Current time: ") + theTime.hour + ":" + theTime.minute + ":" + theTime.second);
+  } else {
+    log_print("Clock sync failed.");
+  }
+
 
   log_print("Delay done. About to setup camera...");
 
@@ -89,28 +109,10 @@ void setup() {
 
   CreateTimer("CheckWifi", 300.0f);
   CreateTimer("PrintStats", 60.0f);
-  CreateTimer("UploadData", 35.0f);
+  CreateTimer("UploadData", 40.0f);
   CreateTimer("IdleHeartbeat", 300.0f); // Log IDLE event every 5 minutes so we can confirm device is alive
 
-  // WiFi after camera and average frame to avoid VSYNC overflow during camera init
-  bool wifiOk = wifi_connect(g_wifiSsid, g_wifiUser, g_wifiPass, g_deviceName.c_str());
-  if (wifiOk) {
-    log_print("WiFi connected.");
-    turn_on_remote_serial_monitoring();
-    enable_remote_serial(true);
-  } else {
-    log_print("WiFi connection failed.");
-  }
 
-  bool clockOk = setupClock(g_wifiSsid.c_str(), g_wifiUser.c_str(), g_wifiPass.c_str());
-  if (clockOk) {
-    g_wifiSetTime = true;
-    log_print("Clock synced.");
-    TimeExact theTime = WhatTimeIsItExactly();
-    log_print(String("Current time: ") + theTime.hour + ":" + theTime.minute + ":" + theTime.second);
-  } else {
-    log_print("Clock sync failed.");
-  }
 
   // Name and create CSV after clock sync so the filename uses the correct time
   NameTheCSVFile();

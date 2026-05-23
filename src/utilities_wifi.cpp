@@ -60,6 +60,10 @@ bool wifi_connect(const String& ssid, const String& user, const String& pass, co
 
   Serial.printf("WiFi: Attempting to connect to '%s'...\n", ssid.c_str());
 
+  // Force STA mode before scanning/connecting for a cleaner WiFi state.
+  WiFi.mode(WIFI_STA);
+  delay(100);
+
   // First, scan to see if the network is available
   int signalStrength = wifi_scan_for_network(ssid.c_str());
   
@@ -82,7 +86,6 @@ bool wifi_connect(const String& ssid, const String& user, const String& pass, co
   }
 
   // Set WiFi mode and begin connection
-  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, pass);
   
   Serial.println("WiFi: Connection attempt started...");
