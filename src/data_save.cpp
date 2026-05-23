@@ -67,7 +67,9 @@ void addEventToQue(const char* eventType) {
         t.year, t.month, t.day,
         t.hour, t.minute, t.second,
         kWeekdays[t.weekday],
-        eventType, DEVICE_ID,
+        DEVICE_ID,
+        eventType,
+        1, // count is always 1 for now but leaving room for future batch events
         g_wifiSetTime ? "timefromwifi" : "estimated",
     "not uploaded");
 
@@ -305,7 +307,7 @@ static void SetClockFromLastCSVEntry(const char* path) {
     }
     f.close();
 
-    // Row format: "2026-03-18 16:02:00,Wednesday,ENTER,hallway,ntp"
+    // Row format example values: "2026-03-17 16:02:45,Tuesday,device01,LEFT_TO_RIGHT,1,timefromwifi,uploaded"
     struct tm t = {};
     if (sscanf(lastRow, "%4d-%2d-%2d %2d:%2d:%2d",
                &t.tm_year, &t.tm_mon, &t.tm_mday,
@@ -413,7 +415,7 @@ bool CreateCSVFile() {
         return false;
     }
 
-    f.println("timestamp,weekday,event,device_id,time_source,uploaded_timestamp");
+    f.println("timestamp,weekday,device_id,event,count,time_source,uploaded_timestamp");
     f.close();
     log_print("CSV created: " + String(g_csvPath));
     return true;
