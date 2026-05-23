@@ -124,8 +124,43 @@ void setup() {
   
 }
 
+// Non-blocking offline indicator: single quick blink every 5s when WiFi is down.
+// Uses its own state so it doesn't interfere with the blinkLED() state machine.
+static unsigned long g_offlineBlink_lastMs = 0;
+static bool          g_offlineBlink_ledOn  = false;
+
+void offlineBlinkTick() {
+    if (WiFi.status() == WL_CONNECTED) {
+        // Online — make sure we didn't leave the LED on
+        if (g_offlineBlink_ledOn) {
+            turnOffLED();
+            g_offlineBlink_ledOn = false;
+        }
+        return;
+    }
+
+    unsigned long now = millis();
+    if (!g_offlineBlink_ledOn) {
+        // Waiting 5s between blinks
+        if (now - g_offlineBlink_lastMs >= 5000) {
+            turnOnLED();
+            g_offlineBlink_ledOn = true;
+            g_offlineBlink_lastMs = now;
+        }
+    } else {
+        // LED is on — keep it on for 100ms then turn off
+        if (now - g_offlineBlink_lastMs >= 100) {
+            turnOffLED();
+            g_offlineBlink_ledOn = false;
+        }
+    }
+}
+
+
 void loop() {
- 
+
+    offlineBlinkTick();
+
     // Poll the remote serial interface for incoming data
     remote_serial_poll();
 
