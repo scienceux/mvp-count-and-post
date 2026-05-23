@@ -23,7 +23,8 @@ SplitFrame CameraGetSplitFrame(Frame frameToSplit) {
     temp_frame[0] = 0;
     temp_frame[1] = 0;
 
-    if (!frameToSplit.copyOfbufferInMemory ) {
+    const size_t expectedLen = (size_t)FW * FH;
+    if (!frameToSplit.copyOfbufferInMemory || frameToSplit.bufferLen < expectedLen) {
         log_print("CameraGetSplitFrame: null frame");
         return SplitFrame{ 0, 0 };
     }
@@ -46,7 +47,7 @@ SplitFrame CameraGetSplitFrame(Frame frameToSplit) {
       // pixels with x >= 320 → block_x = 1 (right half).
       const uint8_t whichside_x = floor(x / SplitWidth); 
 
-      const uint32_t pixelBrightness = ((uint8_t*)frameToSplit.copyOfbufferInMemory)[i];             // get the pixels brightness (0 to 255)
+    const uint32_t pixelBrightness = frameToSplit.copyOfbufferInMemory[i];             // get the pixels brightness (0 to 255)
 
 
       temp_frame[whichside_x] += pixelBrightness;                 
@@ -161,7 +162,14 @@ gridDiff DivideFrameIntoGridAndDiff() {
         return out;
     }
 
-    const uint8_t* pixels = (uint8_t*)current_frame.copyOfbufferInMemory;
+    const size_t expectedLen = (size_t)FW * FH;
+    if (!current_frame.copyOfbufferInMemory || current_frame.bufferLen < expectedLen) {
+        log_print("EnterExitDetector_v2: short/invalid current frame");
+        CameraRelease(current_frame);
+        return out;
+    }
+
+    const uint8_t* pixels = current_frame.copyOfbufferInMemory;
 
     // PIXEL WALK
     // Walk every pixel, accumulate abs diff into its quadrant bucket
@@ -226,7 +234,7 @@ gridDiff DivideFrameIntoGridAndDiff() {
     //------------------------
 
 
-    free(current_frame.copyOfbufferInMemory);
+    CameraRelease(current_frame);
 
     out.valid = true;
 

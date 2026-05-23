@@ -146,15 +146,17 @@ namespace
   void get_raw_frame_pixels()
   {
     Frame f = CameraGetCopyOfLatestFrame();
-    if (!f.valid || !f.copyOfbufferInMemory) {
+    const size_t len = (size_t)FW * FH;
+    if (!f.valid || !f.copyOfbufferInMemory || f.bufferLen < len) {
       g_httpServer.send(503, "text/plain", "no frame available");
+      CameraRelease(f);
       return;
     }
-    const size_t len = (size_t)FW * FH;
+
     g_httpServer.setContentLength(len);
     g_httpServer.send(200, "application/octet-stream", "");
     WiFiClient client = g_httpServer.client();
-    const uint8_t* p = (const uint8_t*)f.copyOfbufferInMemory;
+    const uint8_t* p = f.copyOfbufferInMemory;
     size_t remaining = len;
     const size_t kChunk = 4096;
     while (remaining > 0) {
@@ -163,7 +165,7 @@ namespace
       p         += n;
       remaining -= n;
     }
-    free(f.copyOfbufferInMemory);
+    CameraRelease(f);
   }
 
   // Stream raw grayscale bytes of the PSRAM average frame (no free — it's the master copy)

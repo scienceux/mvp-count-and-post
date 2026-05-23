@@ -118,16 +118,25 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
 
     config.xclk_freq_hz = 10000000; // 10MHz (down from 20MHz) reduces frame rate from sensor, preventing DMA VSYNC overflow on startup
 
-    // Grayscale for counting, or JPEG for training data?
-    config.pixel_format = (camMode == MODE_JPEG) ? PIXFORMAT_JPEG : PIXFORMAT_GRAYSCALE;
-    config.frame_size   = (camMode == MODE_JPEG) ? FRAMESIZE_VGA   : FRAMESIZE_VGA;
-    config.jpeg_quality = (camMode == MODE_JPEG) ? 12              : 0;
-    config.fb_count     = 2; // 2 buffers for both modes — prevents cam_task stack overflow on EV-VSYNC-OVF during init
+    // Grayscale only (training mode removed)
+    config.pixel_format = PIXFORMAT_GRAYSCALE;
+    config.frame_size   = FRAMESIZE_VGA;
+    config.jpeg_quality = 15;
+
+    // Keep stability settings
+    config.fb_count     = 2;
+    config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
+    config.fb_location  = CAMERA_FB_IN_PSRAM;
+
+    log_print("Initializing camera with _init...");
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
         return false;
     }
+
+
+    log_print("About to flush frames...");    
 
     // Flush any frames the sensor produced during init before the DMA was ready.
     // Without this, the frame buffer fills immediately and cam_task overflows on slow/marginal hardware.
@@ -135,9 +144,14 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     for (int i = 0; i < 5; i++) {
         camera_fb_t* fb = esp_camera_fb_get();
         if (fb) esp_camera_fb_return(fb);
+        delay(100);
     }
 
+    log_print("About to run sensor_get...");
+
     sensor_t* sensor = esp_camera_sensor_get();
+
+    log_print("About to run a bunch of sensor->set_ functions...");    
 
     // optional defaults
     sensor->set_gain_ctrl(sensor, 0); // Disable auto-gain because that f's with brightness
@@ -156,6 +170,8 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     sensor->set_hmirror(sensor, 1);          // disable horizontal mirroring (0 = no mirror, 1 = mirror)
     sensor->set_vflip(sensor, 0);            // disable vertical flipping (0 = no flip, 1 = flip)
 
+    log_print("camera setup done, about to return true");
+
     return true;
 }
 
@@ -168,6 +184,7 @@ Frame CameraGetCopyOfLatestFrame()
 {
     Frame out;
     out.copyOfbufferInMemory = nullptr;
+    out.bufferLen = 0;
     out.timecaptured = 0;
     out.valid = false;
 
@@ -178,8 +195,9 @@ Frame CameraGetCopyOfLatestFrame()
         return out;
     }
 
-    // Pave a parking space in memory for our (numberic) pixel data of size fb->len
-    out.copyOfbufferInMemory = (uint32_t*)malloc(fb->len);
+    // Pave a parking space in memory for our pixel data of size fb->len.
+    // Prefer PSRAM to reduce pressure on internal RAM.
+    out.copyOfbufferInMemory = (uint8_t*)ps_malloc(fb->len);
     if (!out.copyOfbufferInMemory) {
         log_print("CameraGetCopyOfLatestFrame: malloc failed");
         esp_camera_fb_return(fb);
@@ -188,6 +206,7 @@ Frame CameraGetCopyOfLatestFrame()
 
     // Park actual pixel data into our parking space
     memcpy(out.copyOfbufferInMemory, fb->buf, fb->len);
+    out.bufferLen = fb->len;
 
     // Give it our standard metadata
     out.timecaptured = millis();
@@ -282,9 +301,37 @@ bool AverageFrameCreate(int numSecondsToAverage) {
     }
 
     // Capture frames and update average until time's up
+    // Guard against occasional bad startup frames on marginal hardware.
+    uint32_t badFrameCount = 0;
     while ((millis() - start) < numMillisToAverage) { // numMillisToAverage are from numSecondsToAverage
         camera_fb_t* fb = esp_camera_fb_get();
-        if (!fb) { turnOffLED(); return false; }
+        if (!fb) {
+            badFrameCount++;
+            if (badFrameCount > 20) {
+                log_print("AverageFrameCreate: too many null frames");
+                turnOffLED();
+                return false;
+            }
+            delay(10);
+            continue;
+        }
+
+        if (fb->format != PIXFORMAT_GRAYSCALE || fb->len < NPIX) {
+            badFrameCount++;
+            if (badFrameCount <= 5) {
+                log_print(String("AverageFrameCreate: skipping bad frame fmt=") + (int)fb->format +
+                          String(" len=") + (uint32_t)fb->len);
+            }
+            esp_camera_fb_return(fb);
+            if (badFrameCount > 20) {
+                turnOffLED();
+                return false;
+            }
+            delay(10);
+            continue;
+        }
+
+        badFrameCount = 0;
 
         // IMPORTANT: assumes fb->format == PIXFORMAT_GRAYSCALE and fb->len == NPIX
         for (size_t i = 0; i < NPIX; i++) {
