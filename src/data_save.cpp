@@ -61,17 +61,17 @@ void queueCSVRowForSaving(const String& newRow) {
 void addEventToQue(const char* eventType) {
     TimeExact t = WhatTimeIsItExactly();
 
-    char row[96];
+    char row[160];
     snprintf(row, sizeof(row),
-        "%04d-%02d-%02d %02d:%02d:%02d,%s,%s,%s,%s",
+        "%04d-%02d-%02d %02d:%02d:%02d,%s,%s,%s,%d,%s,%s",
         t.year, t.month, t.day,
         t.hour, t.minute, t.second,
         kWeekdays[t.weekday],
         DEVICE_ID,
         eventType,
-        1, // count is always 1 for now but leaving room for future batch events
+        1,
         g_wifiSetTime ? "timefromwifi" : "estimated",
-    "not uploaded");
+        "not uploaded");
 
     queueCSVRowForSaving(String(row));
 }
@@ -415,7 +415,7 @@ bool CreateCSVFile() {
         return false;
     }
 
-    f.println("timestamp,weekday,device_id,event,count,time_source,uploaded_timestamp");
+    f.println("timestamp,weekday,device_id,event,count,time_source,upload_status");
     f.close();
     log_print("CSV created: " + String(g_csvPath));
     return true;
