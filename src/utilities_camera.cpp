@@ -124,7 +124,7 @@ bool CameraSetup(int targetFps, const char* DEVICE_MODE)
     config.jpeg_quality = 15;
 
     // Keep stability settings
-    config.fb_count     = 2;
+    config.fb_count     = 1;
     config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
     config.fb_location  = CAMERA_FB_IN_PSRAM;
 
