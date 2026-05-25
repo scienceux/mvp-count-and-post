@@ -40,15 +40,14 @@ void setup() {
   bool ledOk = setupLED();
   if (ledOk) {
     log_print("LED setup successful.");
-    blinkLED(1, "fast");
   } else {
     log_print("LED setup failed.");
   }
+  turnOnLED(); // LED stays on during entire setup — turns off only on success; stays on if panic
 
   bool sdOk = setupSDCard();
   if (sdOk) {
     log_print("SD Card setup successful.");
-    blinkLED(2, "fast");
   } else {
     log_print("SD Card setup failed.");
     // Fail and blink SOS pattern if SD card is not working, since it's critical for operation
@@ -69,7 +68,6 @@ void setup() {
   bool cameraOk = CameraSetup(CAMERA_FPS, g_deviceMode.c_str());
   if (cameraOk) {
     log_print("Camera setup successful.");
-    blinkLED(3, "fast");
   } else {
     log_print("Camera setup failed -- halting.");
     while (true) {
@@ -79,12 +77,6 @@ void setup() {
   }
 
   log_print("All camera setup complete, about to create initial average frame...");
-
-  // Test LED
-  turnOnLED();
-  delay(2000);
-  turnOffLED();
-
 
   CreateTimer("UpdateAverageFrameSecs", 300.0f); // Update average frame every 60 seconds
   AverageFrameCreate(15); // Average frames for first 15 seconds to create initial average frame
@@ -123,7 +115,7 @@ void setup() {
 
   addEventToQue("POWERED_ON");
 
-  
+  turnOffLED(); // Setup completed successfully
 }
 
 void loop() {
