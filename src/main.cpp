@@ -155,6 +155,17 @@ void loop() {
         log_print("WiFi disconnected, attempting reconnect...");
         wifi_connect(g_wifiSsid, g_wifiUser, g_wifiPass);
       }
+      // If clock was never synced (e.g. WiFi wasn't up during setup), retry now
+      if (WiFi.status() == WL_CONNECTED && !g_wifiSetTime) {
+        log_print("Attempting clock sync...");
+        if (setupClock(g_wifiSsid.c_str(), g_wifiUser.c_str(), g_wifiPass.c_str())) {
+          g_wifiSetTime = true;
+          TimeExact t = WhatTimeIsItExactly();
+          log_print(String("Clock synced after reconnect: ") + t.hour + ":" + t.minute + ":" + t.second);
+          NameTheCSVFile();
+          CreateCSVFile();
+        }
+      }
       RestartTimer("CheckWifi");
     }
 
