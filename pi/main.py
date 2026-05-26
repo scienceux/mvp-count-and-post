@@ -136,11 +136,11 @@ def main():
                         break
 
             h, w = first.shape[:2]
-            line_y = int(h * line_frac)
+            line_x = int(w * line_frac)
 
             counter = solutions.ObjectCounter(
                 model=model_path,
-                region=[(0, line_y), (w, line_y)],
+                region=[(line_x, 0), (line_x, h)],
                 classes=[0],
                 conf=det_cfg.get("confidence", 0.5),
                 show=disp_cfg.get("show", False),
@@ -149,7 +149,7 @@ def main():
                 iou=0.7,
             )
 
-            print(f"counter started | {w}x{h} | line y={line_y} | model={model_path}")
+            print(f"counter started | {w}x{h} | line x={line_x} | model={model_path}")
             print(f"device={log_cfg.get('device_id')} | fps={fps} | show={disp_cfg.get('show', False)}")
 
             counter(first)
