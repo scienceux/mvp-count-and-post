@@ -31,14 +31,15 @@ class EventLogger:
         is_new = not path.exists()
         self._f = open(path, "a", encoding="utf-8")
         if is_new:
-            self._f.write("timestamp,weekday,device_id,event,count,time_source\n")
+            self._f.write("timestamp,weekday,device_id,event,count,time_source,person_id\n")
             self._f.flush()
 
-    def log_event(self, event, count=1):
+    def log_event(self, event, count=1, person_id=None):
         now = datetime.now()
         ts = now.strftime("%Y-%m-%d %H:%M:%S")
         wd = WEEKDAYS[now.weekday()]
-        row = f"{ts},{wd},{self._device},{event},{count},{self._time_source}"
+        pid = "" if person_id is None else str(person_id)
+        row = f"{ts},{wd},{self._device},{event},{count},{self._time_source},{pid}"
         # write to queue only — permanent CSV is written after successful upload
         try:
             with open(self._queue_path, "a", encoding="utf-8") as qf:
