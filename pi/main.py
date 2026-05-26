@@ -115,6 +115,7 @@ def main():
 
     prev_in = 0
     prev_out = 0
+    prev_counted_len = 0
     n_frames = 0
     cam = create_camera(cfg)
 
@@ -174,11 +175,17 @@ def main():
                 d_in = cur_in - prev_in
                 d_out = cur_out - prev_out
 
+                # New IDs that crossed the line this frame (in crossing order)
+                new_ids = counter.counted_ids[prev_counted_len:]
+                prev_counted_len = len(counter.counted_ids)
+
                 enter_event, exit_event = ("EXIT", "ENTER") if swap_enter_exit else ("ENTER", "EXIT")
-                for _ in range(d_in):
-                    logger.log_event(enter_event)
-                for _ in range(d_out):
-                    logger.log_event(exit_event)
+                in_ids  = new_ids[:d_in]
+                out_ids = new_ids[d_in:d_in + d_out]
+                for i in range(d_in):
+                    logger.log_event(enter_event, person_id=in_ids[i] if i < len(in_ids) else None)
+                for i in range(d_out):
+                    logger.log_event(exit_event, person_id=out_ids[i] if i < len(out_ids) else None)
 
                 if d_in or d_out:
                     print(f"[{n_frames}] IN:{cur_in}(+{d_in}) OUT:{cur_out}(+{d_out})")
