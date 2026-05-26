@@ -31,9 +31,10 @@ int g_ExitsCount = 0;
 
 
 void setup() {
-  // Initialize serial communication for debugging (optional)
   Serial.begin(9600);
   delay(5000);
+
+  setCpuFrequencyMhz(160);
 
   log_print(psramFound() ? "PSRAM: OK" : "PSRAM: NOT FOUND - camera may crash");
 
