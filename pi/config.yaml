@@ -16,6 +16,13 @@ counter:
   line_position: 0.5    # 0.0 = left, 1.0 = right
   tracker: "bytetrack.yaml"
 
+zigzag:
+  left_line_position: 0.35
+  center_line_position: 0.5
+  right_line_position: 0.65
+  exit_missing_frames: 15
+  crossing_debounce_frames: 2
+
 logging:
   csv_dir: "logs"
   device_id: "booth-v3"
