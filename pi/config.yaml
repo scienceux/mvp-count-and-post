@@ -17,9 +17,9 @@ counter:
   tracker: "bytetrack.yaml"
 
 zigzag:
-  left_line_position: 0.35
+  left_line_position: 0.2
   center_line_position: 0.5
-  right_line_position: 0.65
+  right_line_position: 0.8
   exit_missing_frames: 15
   crossing_debounce_frames: 2
 
@@ -33,4 +33,4 @@ display:
 upload:
   url: "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4da9DU8ci3qPRs9zRLqpAAVbiCkEpDq82b6GQKW-QwOY3Z-Erg/exec"  # Google Apps Script URL; leave empty to disable uploading
   event_id: "booth-v3"  # eventId param sent to the sheet
-  interval_seconds: 30  # how often to attempt flush
+  interval_seconds: 300  # how often to attempt flush
