@@ -65,24 +65,26 @@ class EventLogger:
             self._queue_path.unlink(missing_ok=True)
             return
 
-        # try to upload each row; keep track of what succeeded and what didn't
+        # try to upload rows in batches of 10; keep track of what succeeded and what didn't
         failed = []
         uploaded = []
-        for row in rows:
+        batch_size = 10
+        for start in range(0, len(rows), batch_size):
+            batch = rows[start:start + batch_size]
             try:
                 params = urllib.parse.urlencode({
                     "eventId": self._event_id,
-                    "rows": row,
+                    "rows": "\n".join(batch),
                 })
                 url = f"{self._upload_url}?{params}"
                 with urllib.request.urlopen(url, timeout=10) as resp:
                     if resp.status == 200:
-                        uploaded.append(row)
+                        uploaded.extend(batch)
                     else:
-                        failed.append(row)
+                        failed.extend(batch)
             except Exception as e:
                 print(f"WARNING: upload failed: {e}", file=sys.stderr)
-                failed.append(row)
+                failed.extend(batch)
 
         # move successfully uploaded rows to the permanent daily CSV
         if uploaded:
