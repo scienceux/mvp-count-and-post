@@ -22,12 +22,12 @@ zigzag:
 
 logging:
   csv_dir: "logs"
-  device_id: "booth-v3"
+  device_id: "unnamed-pi5"
 
 display:
   show: true           # true only if monitor is plugged in
 
 upload:
   url: "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4da9DU8ci3qPRs9zRLqpAAVbiCkEpDq82b6GQKW-QwOY3Z-Erg/exec"  # Google Apps Script URL; leave empty to disable uploading
-  event_id: "booth-v3"  # eventId param sent to the sheet
+  event_id: "unnamed-pi5"  # eventId param sent to the sheet
   interval_seconds: 300  # how often to attempt flush

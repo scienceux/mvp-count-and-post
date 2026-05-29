@@ -23,12 +23,12 @@ interval: 30              # seconds between snapshots
 
 logging:
   csv_dir: "logs"
-  device_id: "row-A"
+  device_id: "unnamed-pi4"
 
 display:
   show: true
 
 upload:
   url: "https://script.google.com/macros/s/AKfycbxievFNu5o6SfLJm4da9DU8ci3qPRs9zRLqpAAVbiCkEpDq82b6GQKW-QwOY3Z-Erg/exec"  # Google Apps Script URL; leave empty to disable uploading
-  event_id: "row-A"    # eventId param sent to the sheet
+  event_id: "unnamed-pi4"    # eventId param sent to the sheet
   interval_seconds: 30  # matches the snapshot interval
