@@ -26,9 +26,11 @@ def load_device_config(cfg):
             "device_id": cfg.get("logging", {}).get("device_id", "my-device"),
             "event_id": cfg.get("upload", {}).get("event_id", "my-device"),
             "rotation": 0,
-            "left_line_position": cfg.get("zigzag", {}).get("left_line_position", 0.35),
-            "center_line_position": cfg.get("zigzag", {}).get("center_line_position", 0.5),
-            "right_line_position": cfg.get("zigzag", {}).get("right_line_position", 0.65),
+            "roi_left": 0.0,
+            "roi_right": 1.0,
+            "left_line_position": 0.35,
+            "center_line_position": 0.5,
+            "right_line_position": 0.65,
         }
         lines = [
             "# Per-device settings -- git-ignored, edit this file for each Pi.\n",
@@ -37,6 +39,10 @@ def load_device_config(cfg):
             f"device_id: \"{defaults['device_id']}\"   # name for this device (CSV filenames, logs)\n",
             f"event_id: \"{defaults['event_id']}\"    # Google Sheets event ID (usually same as device_id)\n",
             f"rotation: {defaults['rotation']}                    # camera rotation in degrees: 0, 90, 180, or 270\n",
+            "\n",
+            "# zigzag ROI boundaries: fractions across frame width (persons outside are ignored)\n",
+            f"roi_left: {defaults['roi_left']}\n",
+            f"roi_right: {defaults['roi_right']}\n",
             "\n",
             "# zigzag line positions: fractions across frame width\n",
             f"left_line_position: {defaults['left_line_position']}\n",
@@ -61,6 +67,10 @@ def apply_device_config(cfg, dev):
         cfg.setdefault("camera", {})["rotation"] = dev["rotation"]
 
     zz = cfg.setdefault("zigzag", {})
+    if "roi_left" in dev:
+        zz["roi_left"] = dev["roi_left"]
+    if "roi_right" in dev:
+        zz["roi_right"] = dev["roi_right"]
     if "left_line_position" in dev:
         zz["left_line_position"] = dev["left_line_position"]
     if "center_line_position" in dev:
@@ -88,13 +98,26 @@ def _line_cross_event(prev_x, cur_x, line_x, label):
     return None
 
 
-def _draw_lines(frame, x_positions):
+def _draw_lines(frame, x_positions, roi_bounds=None):
     colors = {
         "leftside": (0, 255, 255),
         "center": (0, 255, 0),
         "rightside": (255, 255, 0),
     }
     h = frame.shape[0]
+    if roi_bounds is not None:
+        for label, x in zip(("roi_left", "roi_right"), roi_bounds):
+            cv2.line(frame, (x, 0), (x, h), (255, 255, 255), 2)
+            cv2.putText(
+                frame,
+                label,
+                (x + 5, 44),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
     for label, x in x_positions.items():
         cv2.line(frame, (x, 0), (x, h), colors[label], 2)
         cv2.putText(
@@ -134,6 +157,8 @@ def main():
     left_pos = zz_cfg.get("left_line_position", 0.35)
     center_pos = zz_cfg.get("center_line_position", 0.5)
     right_pos = zz_cfg.get("right_line_position", 0.65)
+    roi_left = float(zz_cfg.get("roi_left", 0.0))
+    roi_right = float(zz_cfg.get("roi_right", 1.0))
     exit_missing_frames = int(zz_cfg.get("exit_missing_frames", 15))
     debounce_frames = int(zz_cfg.get("crossing_debounce_frames", 2))
 
@@ -141,6 +166,8 @@ def main():
         raise ValueError("zigzag line positions must be in [0.0, 1.0]")
     if not (left_pos < center_pos < right_pos):
         raise ValueError("zigzag lines must satisfy left < center < right")
+    if not (0.0 <= roi_left < roi_right <= 1.0):
+        raise ValueError("roi_left and roi_right must satisfy 0.0 <= roi_left < roi_right <= 1.0")
 
     logger = EventLogger(
         csv_dir=log_cfg.get("csv_dir", "logs"),
@@ -191,10 +218,14 @@ def main():
                 "center": int(w * center_pos),
                 "rightside": int(w * right_pos),
             }
+            roi_left_px = int(w * roi_left)
+            roi_right_px = int(w * roi_right)
+            roi_bounds = (roi_left_px, roi_right_px) if (roi_left > 0.0 or roi_right < 1.0) else None
 
             print(
                 f"zigzag started | {w}x{h} | "
                 f"lines=({x_positions['leftside']},{x_positions['center']},{x_positions['rightside']}) | "
+                f"roi=({roi_left_px},{roi_right_px}) | "
                 f"model={model_path}"
             )
             print(
@@ -225,6 +256,8 @@ def main():
                     xyxy = boxes.xyxy.cpu().tolist()
                     for object_id, (x1, _y1, x2, _y2) in zip(ids, xyxy):
                         center_x = float((x1 + x2) / 2.0)
+                        if center_x < roi_left_px or center_x > roi_right_px:
+                            continue
                         seen_ids.add(object_id)
 
                         state = active.get(object_id)
@@ -275,7 +308,7 @@ def main():
 
                 if disp_cfg.get("show", False):
                     annotated = result.plot()
-                    _draw_lines(annotated, x_positions)
+                    _draw_lines(annotated, x_positions, roi_bounds)
                     cv2.imshow("zigzag", annotated)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break

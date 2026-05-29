@@ -17,9 +17,6 @@ counter:
   tracker: "bytetrack.yaml"
 
 zigzag:
-  left_line_position: 0.2
-  center_line_position: 0.5
-  right_line_position: 0.8
   exit_missing_frames: 15
   crossing_debounce_frames: 2
 
