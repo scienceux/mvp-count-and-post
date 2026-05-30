@@ -254,11 +254,15 @@ def main():
                 if boxes is not None and boxes.id is not None and len(boxes.id) > 0:
                     ids = boxes.id.int().cpu().tolist()
                     xyxy = boxes.xyxy.cpu().tolist()
-                    for object_id, (x1, _y1, x2, _y2) in zip(ids, xyxy):
+                    for object_id, (x1, y1, x2, y2) in zip(ids, xyxy):
                         center_x = float((x1 + x2) / 2.0)
                         if center_x < roi_left_px or center_x > roi_right_px:
                             continue
                         seen_ids.add(object_id)
+
+                        box_height = float(y2 - y1)
+                        box_cx = float((x1 + x2) / 2.0)
+                        box_cy = float((y1 + y2) / 2.0)
 
                         state = active.get(object_id)
                         if state is None:
@@ -266,13 +270,17 @@ def main():
                                 "first_seen": n_frames,
                                 "last_seen": n_frames,
                                 "last_x": center_x,
+                                "last_box_height": box_height,
+                                "last_box_cx": box_cx,
+                                "last_box_cy": box_cy,
                                 "last_cross_frame": {
                                     "leftside": -1000000,
                                     "center": -1000000,
                                     "rightside": -1000000,
                                 },
                             }
-                            logger.log_event("enterframe", person_id=object_id)
+                            logger.log_event("enterframe", person_id=object_id,
+                                             box_height=box_height, box_cx=box_cx, box_cy=box_cy)
                             continue
 
                         prev_x = state["last_x"]
@@ -282,10 +290,14 @@ def main():
                                 continue
                             if (n_frames - state["last_cross_frame"][label]) <= debounce_frames:
                                 continue
-                            logger.log_event(event, person_id=object_id)
+                            logger.log_event(event, person_id=object_id,
+                                             box_height=box_height, box_cx=box_cx, box_cy=box_cy)
                             state["last_cross_frame"][label] = n_frames
 
                         state["last_x"] = center_x
+                        state["last_box_height"] = box_height
+                        state["last_box_cx"] = box_cx
+                        state["last_box_cy"] = box_cy
                         state["last_seen"] = n_frames
 
                 to_exit = []
@@ -296,7 +308,11 @@ def main():
                         to_exit.append(object_id)
 
                 for object_id in to_exit:
-                    logger.log_event("exitframe", person_id=object_id)
+                    s = active[object_id]
+                    logger.log_event("exitframe", person_id=object_id,
+                                     box_height=s.get("last_box_height"),
+                                     box_cx=s.get("last_box_cx"),
+                                     box_cy=s.get("last_box_cy"))
                     del active[object_id]
 
                 if to_exit:
