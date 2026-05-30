@@ -167,8 +167,16 @@ def main():
                     time.sleep(0.5)
                     continue
 
-                counter(frame)
+                results = counter(frame)
                 n_frames += 1
+
+                # Build a lookup: track_id -> (box_height, cx, cy) from this frame's detections
+                box_metrics = {}
+                res_boxes = results[0].boxes if results and results[0].boxes is not None else None
+                if res_boxes is not None and res_boxes.id is not None:
+                    for box, tid in zip(res_boxes.xyxy.tolist(), res_boxes.id.tolist()):
+                        x1, y1, x2, y2 = box
+                        box_metrics[int(tid)] = (y2 - y1, (x1 + x2) / 2, (y1 + y2) / 2)
 
                 cur_in = counter.in_count
                 cur_out = counter.out_count
@@ -183,9 +191,13 @@ def main():
                 in_ids  = new_ids[:d_in]
                 out_ids = new_ids[d_in:d_in + d_out]
                 for i in range(d_in):
-                    logger.log_event(enter_event, person_id=in_ids[i] if i < len(in_ids) else None)
+                    pid = in_ids[i] if i < len(in_ids) else None
+                    bh, cx, cy = box_metrics.get(pid, (None, None, None)) if pid is not None else (None, None, None)
+                    logger.log_event(enter_event, person_id=pid, box_height=bh, box_cx=cx, box_cy=cy)
                 for i in range(d_out):
-                    logger.log_event(exit_event, person_id=out_ids[i] if i < len(out_ids) else None)
+                    pid = out_ids[i] if i < len(out_ids) else None
+                    bh, cx, cy = box_metrics.get(pid, (None, None, None)) if pid is not None else (None, None, None)
+                    logger.log_event(exit_event, person_id=pid, box_height=bh, box_cx=cx, box_cy=cy)
 
                 if d_in or d_out:
                     print(f"[{n_frames}] IN:{cur_in}(+{d_in}) OUT:{cur_out}(+{d_out})")
